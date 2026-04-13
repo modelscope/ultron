@@ -1,0 +1,424 @@
+# Copyright (c) ModelScope Contributors. All rights reserved.
+import json
+import logging
+import os
+from typing import List, Optional
+
+from ..core.llm_service import LLMService
+from .token_budget import truncate_text_to_token_limit
+
+logger = logging.getLogger(__name__)
+
+
+_MEMORY_EXTRACTION_PROMPT = """Analyze the following text and extract all reusable experiences or knowledge as structured memories.
+
+Rules:
+- Extract each distinct experience as a separate memory entry
+- Only extract genuinely reusable knowledge; skip one-off or context-specific details
+- If a field has no meaningful value, use an empty string — do not omit the key
+- tags should be concise keywords (2–5 per entry)
+
+Return strictly as a JSON array with no other text:
+```json
+[
+  {
+    "content": "Core experience (describe the problem and key insight in detail)",
+    "context": "When and where this occurs (environment, trigger conditions)",
+    "resolution": "Solution or recommendation (empty string if not applicable)",
+    "tags": ["tag1", "tag2"]
+  }
+]
+```
+
+Text to analyze:
+"""
+
+_MEMORY_TYPE_CLASSIFY_ALLOWED = frozenset(
+    {
+        "error",
+        "security",
+        "correction",
+        "pattern",
+        "preference",
+        "life",
+    }
+)
+
+_CLASSIFY_MEMORY_TYPE_PROMPT = """You are a memory classifier. Given the fields below, choose exactly one type for this shared memory.
+
+Types (lowercase only):
+- error: technical failures, stack traces, exceptions, environment/dependency issues
+- security: security incidents, vulnerabilities, breaches, hardening, compliance
+- correction: fixing wrong assumptions, wrong operations, or common misconceptions
+- pattern: reusable practices, workflows, conventions, best practices (not a single incident)
+- preference: shareable team conventions or collaboration norms (not personal profiles)
+- life: objective, generalizable life tips (exclude personal medical advice or sensitive privacy)
+
+Return only JSON, no other text. Example: {"memory_type": "error"}
+
+Memory to classify:
+
+"""
+
+
+class LLMOrchestrator:
+    """LLM-driven business operations: memory extraction, merging, classification, skill generation."""
+
+    def __init__(
+        self, llm_service: LLMService, classify_llm_service: Optional[LLMService] = None
+    ):
+        self.llm = llm_service
+        self.classify_llm = classify_llm_service or llm_service
+
+    def prepare_conversation_text_for_memory_extraction(
+        self,
+        messages: List[dict],
+        *,
+        max_conversation_tokens: Optional[int] = None,
+    ) -> str:
+        """
+        Join conversation messages into a single string within a token budget.
+
+        If max_conversation_tokens is given (e.g. a sliding-window chunk limit),
+        that value is used directly; otherwise the budget is derived from the
+        extraction prompt overhead.
+        """
+        from .token_budget import join_messages_lines_within_token_budget
+
+        if max_conversation_tokens is not None:
+            max_toks = max(256, int(max_conversation_tokens))
+        else:
+            max_toks = self.llm.user_text_token_budget(_MEMORY_EXTRACTION_PROMPT)
+        return join_messages_lines_within_token_budget(
+            messages, max_toks, self.llm._count_tokens
+        )
+
+    def extract_memories_from_text(self, text: str) -> List[dict]:
+        """
+        Extract structured memories from raw text.
+
+        Returns a list of dicts with keys: content, context, resolution, tags.
+        Returns [] on LLM failure or unparseable response.
+        """
+        max_toks = self.llm.user_text_token_budget(_MEMORY_EXTRACTION_PROMPT)
+        truncated = truncate_text_to_token_limit(text, max_toks, self.llm._count_tokens)
+        response = self.llm.call(
+            self.llm.dashscope_user_messages(_MEMORY_EXTRACTION_PROMPT + truncated)
+        )
+        if not response:
+            return []
+        result = self.llm.parse_json_response(response)
+        return result if isinstance(result, list) else []
+
+    def summarize_for_l0_l1(
+        self,
+        content: str,
+        context: str,
+        resolution: str,
+        *,
+        l0_max_tokens: Optional[int] = None,
+        l1_max_tokens: Optional[int] = None,
+    ) -> Optional[dict]:
+        """
+        Generate L0 (one-line summary) and L1 (key overview) for a memory record.
+
+        Returns {"summary_l0": "...", "overview_l1": "..."} or None on failure.
+        """
+        l0m = int(l0_max_tokens or os.environ.get("ULTRON_L0_MAX_TOKENS", "64"))
+        l1m = int(l1_max_tokens or os.environ.get("ULTRON_L1_MAX_TOKENS", "256"))
+
+        prompt_prefix = (
+            f"Generate two levels of summary for the following memory record.\n\n"
+            f"L0: one sentence (≤{l0m} tokens) capturing the core takeaway.\n"
+            f"L1: a brief overview (≤{l1m} tokens) covering the problem, scenario, and solution.\n\n"
+            f"Return strictly in JSON:\n"
+            f"```json\n"
+            f'{{"summary_l0": "one-line summary", "overview_l1": "brief overview"}}\n'
+            f"```\n\n"
+            f"Memory:\n"
+        )
+        combined = f"Content: {content}\nContext: {context}\nResolution: {resolution}"
+        max_toks = self.llm.user_text_token_budget(prompt_prefix)
+        truncated = truncate_text_to_token_limit(
+            combined, max_toks, self.llm._count_tokens
+        )
+
+        response = self.llm.call(
+            self.llm.dashscope_user_messages(prompt_prefix + truncated)
+        )
+        if not response:
+            return None
+
+        result = self.llm.parse_json_response(response, expect_array=False)
+        if not isinstance(result, dict):
+            return None
+
+        s0 = result.get("summary_l0", "") or ""
+        s1 = result.get("overview_l1", "") or ""
+        if l0m > 0:
+            s0 = truncate_text_to_token_limit(s0, l0m, self.llm._count_tokens)
+        if l1m > 0:
+            s1 = truncate_text_to_token_limit(s1, l1m, self.llm._count_tokens)
+        return {"summary_l0": s0, "overview_l1": s1}
+
+    def confirm_memory_duplicate(
+        self,
+        existing_content: str,
+        existing_context: str,
+        new_content: str,
+        new_context: str,
+    ) -> bool:
+        """Ask the LLM whether two memories describe the same topic and should be merged.
+
+        Used as a second-stage check when embedding similarity falls in the
+        soft-threshold range (e.g. 0.75–0.85).  Returns ``True`` to merge.
+        """
+        _trunc = lambda t: truncate_text_to_token_limit(
+            t, 512, self.classify_llm._count_tokens
+        )
+        prompt = (
+            "You are a memory deduplication judge. Decide whether the two memories "
+            "below describe essentially the same topic / experience and should be "
+            "merged into one.\n\n"
+            "Rules:\n"
+            "- If they cover the same core subject (even with different wording or "
+            "detail level), answer YES.\n"
+            "- If they cover clearly different subjects that merely share a keyword, "
+            "answer NO.\n\n"
+            f"Memory A:\n- Content: {_trunc(existing_content)}\n"
+            f"- Context: {_trunc(existing_context)}\n\n"
+            f"Memory B:\n- Content: {_trunc(new_content)}\n"
+            f"- Context: {_trunc(new_context)}\n\n"
+            'Return only JSON: {"should_merge": true} or {"should_merge": false}'
+        )
+        response = self.classify_llm.call(
+            self.classify_llm.dashscope_user_messages(prompt)
+        )
+        if not response:
+            return False
+        try:
+            obj = json.loads(response.strip().strip("`").strip())
+            return bool(obj.get("should_merge", False))
+        except (json.JSONDecodeError, AttributeError):
+            lower = response.strip().lower()
+            return '"should_merge": true' in lower or '"should_merge":true' in lower
+
+    def merge_memories(
+        self,
+        old_content: str,
+        old_context: str,
+        old_resolution: str,
+        new_content: str,
+        new_context: str,
+        new_resolution: str,
+        *,
+        max_field_tokens: int = 0,
+    ) -> Optional[dict]:
+        """
+        Merge two similar memories into one abstracted, generalized memory.
+
+        Returns {"content": "...", "context": "...", "resolution": "..."} or None.
+        """
+        cap_instruction = ""
+        if max_field_tokens > 0:
+            cap_instruction = (
+                f"\n5. Keep each output field within {max_field_tokens} tokens; "
+                "drop lower-value detail if needed to fit.\n"
+            )
+
+        _fixed = (
+            "You are a memory consolidation expert. Merge the two memories below "
+            "into one more general, abstracted memory.\n\nRequirements:\n1. ...\n"
+            "Return strictly in JSON:\n```json\n{...}\n```\n\n"
+            "Existing memory:\n- Content: \n- Context: \n- Resolution: \n\n"
+            "New memory:\n- Content: \n- Context: \n- Resolution: "
+        ) + cap_instruction
+        per_field = max(self.llm.user_text_token_budget(_fixed) // 6, 64)
+
+        old_content = truncate_text_to_token_limit(
+            old_content, per_field, self.llm._count_tokens
+        )
+        old_context = truncate_text_to_token_limit(
+            old_context, per_field, self.llm._count_tokens
+        )
+        old_resolution = truncate_text_to_token_limit(
+            old_resolution, per_field, self.llm._count_tokens
+        )
+        new_content = truncate_text_to_token_limit(
+            new_content, per_field, self.llm._count_tokens
+        )
+        new_context = truncate_text_to_token_limit(
+            new_context, per_field, self.llm._count_tokens
+        )
+        new_resolution = truncate_text_to_token_limit(
+            new_resolution, per_field, self.llm._count_tokens
+        )
+
+        prompt = f"""You are a memory consolidation expert. Merge the two memories below into one more general, abstracted memory.
+
+Requirements:
+1. Extract the common pattern; remove overly specific details; keep the general rule.
+2. If both describe different instances of the same class of problem, produce one memory covering that class.
+3. Synthesize — do NOT simply concatenate.
+4. Preserve key technical details and actionable solutions.{cap_instruction}
+Return strictly in JSON:
+```json
+{{
+  "content": "merged memory content",
+  "context": "merged context/scenario",
+  "resolution": "merged solution"
+}}
+```
+
+Existing memory:
+- Content: {old_content}
+- Context: {old_context}
+- Resolution: {old_resolution}
+
+New memory:
+- Content: {new_content}
+- Context: {new_context}
+- Resolution: {new_resolution}"""
+
+        response = self.llm.call(self.llm.dashscope_user_messages(prompt))
+        if not response:
+            return None
+        result = self.llm.parse_json_response(response, expect_array=False)
+        if not isinstance(result, dict) or not result.get("content"):
+            return None
+        c = result.get("content", "") or ""
+        ctx = result.get("context", "") or ""
+        res = result.get("resolution", "") or ""
+        if max_field_tokens > 0:
+            c = truncate_text_to_token_limit(
+                c, max_field_tokens, self.llm._count_tokens
+            )
+            ctx = truncate_text_to_token_limit(
+                ctx, max_field_tokens, self.llm._count_tokens
+            )
+            res = truncate_text_to_token_limit(
+                res, max_field_tokens, self.llm._count_tokens
+            )
+        return {"content": c, "context": ctx, "resolution": res}
+
+    def generate_skill_content(
+        self,
+        primary_content: str,
+        primary_context: str,
+        primary_resolution: str,
+        related_memories: Optional[List[dict]] = None,
+        contributions: Optional[List[dict]] = None,
+    ) -> Optional[dict]:
+        """
+        Synthesize a reusable skill document from memories using LLM.
+
+        Returns {"name": "...", "description": "...", "content": "..."} or None.
+        """
+        _fixed_overhead = (
+            "You are a knowledge engineer. Synthesize the following memories "
+            "into a reusable skill document.\n\nRequirements:\n...\n"
+            "Return strictly in JSON:\n```json\n{...}\n```\n\n"
+            "Memories to synthesize:\nPrimary memory:\n- Content: \n- Context: \n- Resolution: "
+        )
+        primary_budget = max(self.llm.user_text_token_budget(_fixed_overhead) // 2, 128)
+        per_primary = max(primary_budget // 3, 64)
+
+        p_content = truncate_text_to_token_limit(
+            primary_content, per_primary * 2, self.llm._count_tokens
+        )
+        p_context = truncate_text_to_token_limit(
+            primary_context, per_primary, self.llm._count_tokens
+        )
+        p_resolution = truncate_text_to_token_limit(
+            primary_resolution, per_primary, self.llm._count_tokens
+        )
+
+        parts = [f"Primary memory:\n- Content: {p_content}"]
+        if p_context:
+            parts.append(f"- Context: {p_context}")
+        if p_resolution:
+            parts.append(f"- Resolution: {p_resolution}")
+        if contributions:
+            parts.append(f"\nAlternative solutions from {len(contributions)} agents:")
+            for i, c in enumerate(contributions[:5], 1):
+                r = truncate_text_to_token_limit(
+                    c.get("resolution") or "", 100, self.llm._count_tokens
+                )
+                if r:
+                    parts.append(f"  {i}. {r}")
+        if related_memories:
+            parts.append(f"\nRelated experiences ({len(related_memories)}):")
+            for i, m in enumerate(related_memories[:5], 1):
+                snippet = truncate_text_to_token_limit(
+                    m.get("content") or "", 100, self.llm._count_tokens
+                )
+                parts.append(f"  {i}. {snippet}")
+
+        prompt = f"""You are a knowledge engineer. Synthesize the following memories into a reusable skill document.
+
+Requirements:
+1. Abstract the pattern — extract the general rule, not just the specific instance.
+2. Write a clear problem description, trigger conditions, and step-by-step solution.
+3. If multiple solutions exist, rank them by reliability.
+4. Keep it concise and actionable — an agent should be able to follow this immediately.
+
+Return strictly in JSON:
+```json
+{{
+  "name": "short-kebab-case-name",
+  "description": "One sentence describing what this skill solves",
+  "content": "Full markdown skill document with ## sections"
+}}
+```
+
+Memories to synthesize:
+{chr(10).join(parts)}"""
+
+        response = self.llm.call(self.llm.dashscope_user_messages(prompt))
+        if not response:
+            return None
+        result = self.llm.parse_json_response(response, expect_array=False)
+        if not isinstance(result, dict) or not result.get("content"):
+            return None
+        return {
+            "name": result.get("name", ""),
+            "description": result.get("description", ""),
+            "content": result.get("content", ""),
+        }
+
+    def classify_memory_type(
+        self,
+        content: str,
+        context: str = "",
+        resolution: str = "",
+        *,
+        max_body_tokens: int = 3072,
+    ) -> Optional[str]:
+        """
+        Classify a memory into one of the allowed types using LLM.
+
+        Returns one of: error, security, correction, pattern, preference, life.
+        Returns None if unavailable, call fails, or output is not a valid type.
+        """
+        if not self.classify_llm.is_available:
+            return None
+        combined = (
+            f"content:\n{content or '(empty)'}\n\n"
+            f"context:\n{context or '(empty)'}\n\n"
+            f"resolution:\n{resolution or '(empty)'}"
+        )
+        truncated = truncate_text_to_token_limit(
+            combined, max_body_tokens, self.classify_llm._count_tokens
+        )
+        response = self.classify_llm.call(
+            self.classify_llm.dashscope_user_messages(
+                _CLASSIFY_MEMORY_TYPE_PROMPT + truncated
+            )
+        )
+        if not response:
+            return None
+        result = self.classify_llm.parse_json_response(response, expect_array=False)
+        if not isinstance(result, dict):
+            return None
+        mt = (result.get("memory_type") or "").strip().lower()
+        return mt if mt in _MEMORY_TYPE_CLASSIFY_ALLOWED else None
