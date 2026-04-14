@@ -263,8 +263,8 @@ uvicorn ultron.server:app --host 0.0.0.0 --port 9999
 
 详见 [ROADMAP.md](ROADMAP.md)。当前项包括：
 
-- [ ] **MS-Agent 深度集成**：经 MS-Agent 组件贯通用户对话记忆与技能蒸馏（当前为轻量基于提示的抽取）。
-- [ ] **事实核验**：对高优先级记忆事实借助 MS-Agent Deep Research 做校验。
+- [ ] **MS-Agent 深度集成**：经 [MS-Agent](https://github.com/modelscope/ms-agent) 组件贯通用户对话记忆与技能蒸馏（当前为轻量基于提示的抽取）。
+- [ ] **事实核验**：对高优先级记忆事实借助 [MS-Agent Agentic Insight](https://github.com/modelscope/ms-agent/tree/main/projects/deep_research/v2) 做校验。
 
 ---
 
@@ -274,6 +274,8 @@ Ultron 建立在以下开源项目之上，谨向作者与贡献者致谢：
 
 - **[agency-agents](https://github.com/msitarzewski/agency-agents)**：Harness Hub 中的角色预设（及相关工具链）**改编自**该社区角色库；我们会跟踪上游以保留来源与更新。
 - **[MS-Agent](https://github.com/modelscope/modelscope-agent)**：驱动 Ultron 的智能体框架。
+- **[ModelScope Skills](https://modelscope.cn/skills)**：Skill Hub 中的外部技能发现基于 ModelScope 技能中心的索引与生态。
+- **[ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench)**：Ultron 内置了大量群体记忆，包括在[数据](#数据)中汇总的 **1,746** 条结构化记忆，均来源于该基准数据集中的真实智能体轨迹。
 
 ---
 
