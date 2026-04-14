@@ -261,8 +261,8 @@ That's it. For detailed configuration, API reference, SDK usage, and project str
 
 See [ROADMAP.md](ROADMAP.md) for the living list. Current items:
 
-- [ ] **MS-Agent integration**: Pipe user-dialogue memory and skill distillation through MS-Agent components (today: lightweight prompt-based extraction).
-- [ ] **Fact verification**: Validate hot (high-priority) memory facts with MS-Agent Deep Research.
+- [ ] **MS-Agent integration**: Pipe user-dialogue memory and skill distillation through [MS-Agent](https://github.com/modelscope/ms-agent) components (today: lightweight prompt-based extraction).
+- [ ] **Fact verification**: Validate hot (high-priority) memory facts with [MS-Agent Agentic Insight](https://github.com/modelscope/ms-agent/tree/main/projects/deep_research/v2).
 
 ---
 
