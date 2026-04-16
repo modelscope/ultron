@@ -64,7 +64,10 @@ class UltronConfig:
         default_factory=lambda: os.environ.get("DASHSCOPE_API_KEY", "").strip()
     )
 
-    # Embeddings (placeholder dim until first API success)
+    # Embeddings (single backend per service instance; do not mix backends/models without reset)
+    embedding_backend: str = field(
+        default_factory=lambda: os.environ.get("ULTRON_EMBEDDING_BACKEND", "dashscope")
+    )
     embedding_model: str = field(
         default_factory=lambda: os.environ.get(
             "ULTRON_EMBEDDING_MODEL", "text-embedding-v4"
@@ -215,13 +218,34 @@ class UltronConfig:
         )
     )
 
-    # LLM ingestion (DashScope-compatible endpoint)
-    llm_model: str = field(
-        default_factory=lambda: os.environ.get("ULTRON_LLM_MODEL", "qwen3.5-flash")
+    # LLM ingestion (OpenAI-compatible endpoint)
+    llm_provider: str = field(
+        default_factory=lambda: os.environ.get("ULTRON_LLM_PROVIDER", "dashscope")
     )
-    llm_api_url: str = field(
-        default_factory=lambda: os.environ.get(
-            "ULTRON_LLM_API_URL", "https://dashscope.aliyuncs.com/api/v1"
+    llm_model: str = field(
+        default_factory=lambda: (
+            os.environ.get("ULTRON_MODEL", "").strip()
+            or os.environ.get("ULTRON_LLM_MODEL", "qwen3.5-flash").strip()
+        )
+    )
+    llm_base_url: str = field(
+        default_factory=lambda: (
+            os.environ.get("ULTRON_BASE_URL", "").strip()
+            or os.environ.get(
+                "ULTRON_LLM_BASE_URL",
+                os.environ.get(
+                    "ULTRON_LLM_API_URL",
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                ),
+            ).strip()
+        )
+    )
+    llm_api_key: str = field(
+        default_factory=lambda: (
+            os.environ.get("ULTRON_API_KEY", "").strip()
+            or os.environ.get("ULTRON_LLM_API_KEY", "").strip()
+            or os.environ.get("OPENAI_API_KEY", "").strip()
+            or os.environ.get("DASHSCOPE_API_KEY", "").strip()
         )
     )
     # User/payload budget; reserve stays out of user text budget
@@ -241,7 +265,7 @@ class UltronConfig:
             "ULTRON_LLM_TOKEN_COUNT_ENCODING", "cl100k_base"
         )
     )
-    # DashScope HTTP read timeout (SDK default is 300s; increase for large prompts or slow links)
+    # OpenAI-compatible HTTP read timeout (increase for large prompts or slow links)
     llm_request_timeout_seconds: int = field(
         default_factory=lambda: max(
             60,

@@ -198,7 +198,7 @@ class SmartIngestionService:
         result = self._error_result(source_file=source_file)
 
         if not self.llm.is_available:
-            result["error"] = "LLM unavailable (requires DASHSCOPE_API_KEY)"
+            result["error"] = "LLM unavailable (requires OpenAI-compatible API key)"
             return result
 
         if not text or not text.strip():

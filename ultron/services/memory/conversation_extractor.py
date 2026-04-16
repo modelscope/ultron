@@ -204,7 +204,7 @@ class ConversationExtractor:
             return result
 
         if not self.llm_orchestrator or not self.llm_orchestrator.llm.is_available:
-            result["error"] = "LLM unavailable: install dashscope and set DASHSCOPE_API_KEY"
+            result["error"] = "LLM unavailable: configure an OpenAI-compatible API key"
             return result
 
         try:

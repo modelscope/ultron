@@ -1,5 +1,6 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 import os
+import json
 from typing import Optional
 
 from ...config import UltronConfig, default_config
@@ -48,6 +49,11 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
 
         if self.config.dashscope_api_key:
             os.environ["DASHSCOPE_API_KEY"] = self.config.dashscope_api_key
+        if self.config.llm_api_key:
+            if (self.config.llm_provider or "").strip().lower() == "dashscope":
+                os.environ["DASHSCOPE_API_KEY"] = self.config.llm_api_key
+            else:
+                os.environ["OPENAI_API_KEY"] = self.config.llm_api_key
 
         self.config.ensure_directories()
 
@@ -57,17 +63,21 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
             str(self.config.archive_dir),
         )
         self.embedding = EmbeddingService(
+            backend=self.config.embedding_backend,
             model_name=self.config.embedding_model,
             embedding_dimension_hint=self.config.embedding_dimension,
             request_timeout_seconds=self.config.llm_request_timeout_seconds,
         )
+        self._assert_embedding_profile_consistent()
 
         self.parser = SkillParser()
         self.sanitizer = DataSanitizer()
 
         self.llm_service = LLMService(
+            provider=self.config.llm_provider,
             model=self.config.llm_model,
-            api_url=self.config.llm_api_url,
+            base_url=self.config.llm_base_url,
+            api_key=self.config.llm_api_key,
             max_input_tokens=self.config.llm_max_input_tokens,
             prompt_reserve_tokens=self.config.llm_prompt_reserve_tokens,
             tiktoken_encoding=self.config.llm_token_count_encoding,
@@ -76,8 +86,10 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
             retry_base_delay_seconds=self.config.llm_retry_base_delay_seconds,
         )
         self.memory_category_llm_service = LLMService(
+            provider=self.config.llm_provider,
             model=self.config.memory_category_llm_model,
-            api_url=self.config.llm_api_url,
+            base_url=self.config.llm_base_url,
+            api_key=self.config.llm_api_key,
             max_input_tokens=self.config.llm_max_input_tokens,
             prompt_reserve_tokens=self.config.llm_prompt_reserve_tokens,
             tiktoken_encoding=self.config.llm_token_count_encoding,
@@ -136,3 +148,38 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
         )
 
         self.harness = HarnessService(self.db)
+
+    def _assert_embedding_profile_consistent(self) -> None:
+        """
+        Enforce single embedding family in one service data directory.
+
+        Mixing vectors from different embedding backends/models causes retrieval
+        quality collapse because cosine similarity is no longer comparable.
+        """
+        profile_file = self.config.models_dir / "embedding_profile.json"
+        current = {
+            "backend": self.config.embedding_backend,
+            "model": self.config.embedding_model,
+            "dimension": int(self.embedding.dimension),
+        }
+        if not profile_file.exists():
+            profile_file.write_text(
+                json.dumps(current, ensure_ascii=True, indent=2), encoding="utf-8"
+            )
+            return
+        try:
+            existing = json.loads(profile_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise RuntimeError(
+                f"invalid embedding profile at {profile_file}: {e}"
+            ) from e
+        if (
+            str(existing.get("backend")) != str(current["backend"])
+            or str(existing.get("model")) != str(current["model"])
+            or int(existing.get("dimension", 0) or 0) != int(current["dimension"])
+        ):
+            raise RuntimeError(
+                "Embedding config mismatch with existing data. "
+                "A single Ultron data directory must use one embedding backend/model/dimension. "
+                "Run reset_all() before switching embedding settings."
+            )

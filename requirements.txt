@@ -5,8 +5,13 @@ fastapi>=0.100.0
 uvicorn>=0.22.0
 pydantic>=2.0.0
 
-# Alibaba DashScope (LLM + TextEmbedding; ultron.core.llm_service / embeddings)
+# DashScope embedding API + OpenAI-compatible LLM
 dashscope>=1.14.0
+openai>=1.0.0
+
+# Local embedding backend (ultron.core.embeddings, backend=local)
+transformers>=4.51.0
+sentence-transformers>=2.7.0
 
 # Token counting (UltronConfig llm_*_tokens, ULTRON_LLM_*)
 tiktoken>=0.5.0

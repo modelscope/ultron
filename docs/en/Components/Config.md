@@ -6,11 +6,11 @@ description: UltronConfig and environment variables
 
 # Configuration
 
-Ultron uses the `UltronConfig` dataclass. **`ULTRON_*` environment variables** and **`DASHSCOPE_API_KEY`** supply defaults; explicit arguments to `UltronConfig(...)` **override** the environment. `DASHSCOPE_API_KEY` maps to `dashscope_api_key`; when constructing `Ultron`, a non-empty value is written to `os.environ["DASHSCOPE_API_KEY"]` for existing DashScope clients.
+Ultron uses the `UltronConfig` dataclass. **`ULTRON_*` environment variables** supply defaults; explicit arguments to `UltronConfig(...)` **override** the environment. LLM now follows an OpenAI-compatible abstraction (`llm_provider`, `llm_model`, `llm_base_url`, `llm_api_key`), while embedding still uses DashScope (`dashscope_api_key`).
 
 On first import of `ultron.config` (or `import ultron`), `load_ultron_dotenv()` loads `~/.ultron/.env` into `os.environ` (`override=False`).
 
-- The repo provides `.env.example`; copy `DASHSCOPE_API_KEY` and `ULTRON_*` into `~/.ultron/.env` (create the directory if needed).
+- The repo provides `.env.example`; copy `ULTRON_*` into `~/.ultron/.env` (create the directory if needed).
 - Without **`python-dotenv`**, `load_ultron_dotenv()` is a no-op; use exported variables or your process manager.
 
 ## Configure in code
@@ -47,17 +47,22 @@ ultron = Ultron(config=config)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `embedding_backend` | str | `dashscope` | Embedding backend: `dashscope` or `local` |
 | `embedding_model` | str | `text-embedding-v4` | DashScope TextEmbedding model |
 | `embedding_dimension` | int | `1024` | Vector size (API may refine after first call) |
+
+> Important: one `ULTRON_DATA_DIR` must use one embedding backend/model/dimension combination. If you switch embedding settings, run `reset_all()` first to avoid vector-space mismatch and degraded retrieval quality.
 
 ### LLM
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `llm_model` | str | `qwen3.5-flash` | Main LLM (ingestion, summaries, merges) |
+| `llm_provider` | str | `dashscope` | OpenAI-compatible backend selector (`dashscope`, `openai`, etc.) |
+| `llm_model` | str | `qwen3.5-flash` | Main LLM (ingestion, summaries, merges); prefers env `ULTRON_MODEL` |
 | `memory_category_llm_model` | str | `qwen3.5-flash` | LLM for memory **type** (error/security/…) |
 | `skill_category_llm_model` | str | `qwen3.5-flash` | LLM for skill taxonomy |
-| `llm_api_url` | str | `https://dashscope.aliyuncs.com/api/v1` | DashScope-compatible API root |
+| `llm_base_url` | str | `https://dashscope.aliyuncs.com/compatible-mode/v1` | OpenAI-compatible API root; prefers env `ULTRON_BASE_URL` |
+| `llm_api_key` | str | `""` | LLM API key; prefers env `ULTRON_API_KEY` |
 | `llm_max_input_tokens` | int | `200000` | User text token budget cap |
 | `llm_prompt_reserve_tokens` | int | `8192` | Reserved tokens for system prompt (**not** counted in user budget) |
 | `llm_token_count_encoding` | str | `cl100k_base` | tiktoken encoding for truncation |
@@ -135,6 +140,7 @@ HTTP logging and `/reset` auth are covered in [Installation](../GetStarted/Insta
 | `ULTRON_DATA_DIR` | `data_dir` |
 | `ULTRON_DB_NAME` | `db_name` |
 | `ULTRON_EMBEDDING_MODEL` | `embedding_model` |
+| `ULTRON_EMBEDDING_BACKEND` | `embedding_backend` |
 | `ULTRON_EMBEDDING_DIMENSION` | `embedding_dimension` |
 | `ULTRON_HOT_PERCENTILE` | `hot_percentile` |
 | `ULTRON_WARM_PERCENTILE` | `warm_percentile` |
@@ -155,10 +161,16 @@ HTTP logging and `/reset` auth are covered in [Installation](../GetStarted/Insta
 | `ULTRON_DECAY_INTERVAL_HOURS` | `decay_interval_hours` |
 | `ULTRON_DECAY_ALPHA` | `decay_alpha` |
 | `ULTRON_TIME_DECAY_WEIGHT` | `time_decay_weight` |
-| `ULTRON_LLM_MODEL` | `llm_model` |
+| `ULTRON_LLM_PROVIDER` | `llm_provider` |
+| `ULTRON_MODEL` | `llm_model` |
+| `ULTRON_LLM_MODEL` | `llm_model` (fallback) |
 | `ULTRON_MEMORY_CATEGORY_MODEL` | `memory_category_llm_model` |
 | `ULTRON_SKILL_CATEGORY_MODEL` | `skill_category_llm_model` |
-| `ULTRON_LLM_API_URL` | `llm_api_url` |
+| `ULTRON_BASE_URL` | `llm_base_url` |
+| `ULTRON_LLM_BASE_URL` | `llm_base_url` (fallback) |
+| `ULTRON_LLM_API_URL` | `llm_base_url` (fallback) |
+| `ULTRON_API_KEY` | `llm_api_key` |
+| `ULTRON_LLM_API_KEY` | `llm_api_key` (fallback) |
 | `ULTRON_LLM_MAX_INPUT_TOKENS` | `llm_max_input_tokens` |
 | `ULTRON_LLM_PROMPT_RESERVE_TOKENS` | `llm_prompt_reserve_tokens` |
 | `ULTRON_LLM_TOKEN_COUNT_ENCODING` | `llm_token_count_encoding` |
