@@ -151,6 +151,23 @@ class SkillMixin:
                 return None
         return self.storage.load_skill(slug, version)
 
+    def get_internal_skill_md_text(self, slug: str) -> Optional[str]:
+        """Raw ``SKILL.md`` for a published internal skill (DB row + filesystem)."""
+        row = self.db.get_skill(slug)
+        if not row:
+            return None
+        lp = (row.get("local_path") or "").strip()
+        if lp:
+            p = Path(lp) / "SKILL.md"
+            if p.is_file():
+                return p.read_text(encoding="utf-8")
+        ver = row.get("version")
+        if ver:
+            text = self.storage.read_skill_md_text(slug, ver)
+            if text is not None:
+                return text
+        return self.storage.read_skill_md_text(slug, None)
+
     def search_skills(
         self,
         query: str,

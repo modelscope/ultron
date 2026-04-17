@@ -218,6 +218,21 @@ async def dashboard_skills(
     return {"data": rows, "total": total, "page": page, "page_size": page_size}
 
 
+@router.get("/dashboard/skills/internal/{slug}/skill-md")
+async def dashboard_internal_skill_md(slug: str):
+    """Return raw SKILL.md text for an internal (Ultron-published) skill."""
+    u = server_state.ultron
+    if u is None:
+        raise RuntimeError("Server not initialized")
+    text = u.get_internal_skill_md_text(slug)
+    if text is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Skill not found or SKILL.md missing on server",
+        )
+    return {"slug": slug, "content": text}
+
+
 @router.get("/dashboard/leaderboard")
 async def dashboard_leaderboard(
     limit: int = Query(50, ge=1, le=200),

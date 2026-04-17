@@ -281,6 +281,10 @@ class MemoryService:
             detail=f"type={memory_type}, tier=warm, l0={summary_l0[:40]}",
             duration_ms=_dur,
         )
+
+        # Assign to knowledge cluster for evolution
+        self._try_assign_to_cluster(record)
+
         return record
 
     _DETAIL_CLEAR = {
@@ -1021,5 +1025,14 @@ class MemoryService:
             return
         try:
             self.skill_generator.generate_skill_from_memory(memory_id)
+        except Exception:
+            pass
+
+    def _try_assign_to_cluster(self, record: MemoryRecord) -> None:
+        """Assign a newly uploaded memory to a knowledge cluster. Failures are silent."""
+        try:
+            from ultron import server_state
+            if server_state.cluster_service is not None:
+                server_state.cluster_service.assign_memory_to_cluster(record)
         except Exception:
             pass

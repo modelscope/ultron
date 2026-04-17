@@ -21,6 +21,8 @@ from ultron.core.logging import setup_logging, set_trace_id, log_event
 from ultron.services.auth import AuthService
 from ultron.services.harness.soul_presets import SoulPresetService
 from ultron.services.harness.showcase import ShowcaseService
+from ultron.services.skill.skill_cluster import KnowledgeClusterService
+from ultron.services.skill.skill_evolution import SkillEvolutionEngine
 
 embedding_queue = None
 _decay_task = None
@@ -42,6 +44,21 @@ server_state.soul_preset_service.load()
 server_state.showcase_service = ShowcaseService()
 server_state.showcase_service.load()
 
+# Initialize evolution services
+_u = server_state.ultron
+server_state.cluster_service = KnowledgeClusterService(
+    _u.db, _u.embedding, _u.config,
+)
+server_state.evolution_engine = SkillEvolutionEngine(
+    database=_u.db,
+    storage=_u.storage,
+    embedding_service=_u.embedding,
+    cluster_service=server_state.cluster_service,
+    config=_u.config,
+    llm_orchestrator=_u.llm_orchestrator,
+    catalog=_u.catalog,
+)
+
 
 async def _decay_loop():
     u = server_state.ultron
@@ -61,6 +78,14 @@ async def _decay_loop():
                     _logger.info("Background consolidation completed: %s", result)
             except Exception:
                 _logger.exception("Background consolidation failed")
+        # Skill evolution cycle
+        if u.config.evolution_enabled and server_state.evolution_engine:
+            try:
+                evo_result = server_state.evolution_engine.run_evolution_cycle()
+                if evo_result.get("crystallized") or evo_result.get("recrystallized"):
+                    _logger.info("Background evolution completed: %s", evo_result)
+            except Exception:
+                _logger.exception("Background evolution cycle failed")
 
 
 @asynccontextmanager

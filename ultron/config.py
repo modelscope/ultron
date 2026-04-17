@@ -225,7 +225,7 @@ class UltronConfig:
     llm_model: str = field(
         default_factory=lambda: (
             os.environ.get("ULTRON_MODEL", "").strip()
-            or os.environ.get("ULTRON_LLM_MODEL", "qwen3.5-flash").strip()
+            or os.environ.get("ULTRON_LLM_MODEL", "qwen3.6-flash").strip()
         )
     )
     llm_base_url: str = field(
@@ -287,12 +287,12 @@ class UltronConfig:
     )
     skill_category_llm_model: str = field(
         default_factory=lambda: os.environ.get(
-            "ULTRON_SKILL_CATEGORY_MODEL", "qwen3.5-flash"
+            "ULTRON_SKILL_CATEGORY_MODEL", "qwen3.6-flash"
         )
     )
     memory_category_llm_model: str = field(
         default_factory=lambda: os.environ.get(
-            "ULTRON_MEMORY_CATEGORY_MODEL", "qwen3.5-flash"
+            "ULTRON_MEMORY_CATEGORY_MODEL", "qwen3.6-flash"
         )
     )
 
@@ -302,6 +302,35 @@ class UltronConfig:
             os.environ.get("ULTRON_ARCHIVE_RAW_UPLOADS", "1").lower()
             not in ("0", "false", "no", "off")
         ),
+    )
+
+    # --- Skill evolution (cluster crystallization) ---
+    evolution_enabled: bool = field(
+        default_factory=lambda: _env_bool("ULTRON_EVOLUTION_ENABLED", True),
+    )
+    cluster_similarity_threshold: float = field(
+        default_factory=lambda: max(
+            0.0,
+            min(1.0, float(os.environ.get("ULTRON_CLUSTER_SIMILARITY_THRESHOLD", "0.6"))),
+        )
+    )
+    crystallization_threshold: int = field(
+        default_factory=lambda: max(
+            2,
+            int(os.environ.get("ULTRON_CRYSTALLIZATION_THRESHOLD", "3")),
+        )
+    )
+    recrystallization_delta: int = field(
+        default_factory=lambda: max(
+            1,
+            int(os.environ.get("ULTRON_RECRYSTALLIZATION_DELTA", "2")),
+        )
+    )
+    evolution_batch_limit: int = field(
+        default_factory=lambda: max(
+            1,
+            int(os.environ.get("ULTRON_EVOLUTION_BATCH_LIMIT", "3")),
+        )
     )
 
     # JWT secret for user authentication (auto-generated and persisted if not set)

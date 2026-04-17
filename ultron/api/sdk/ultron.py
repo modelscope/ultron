@@ -68,7 +68,7 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
             embedding_dimension_hint=self.config.embedding_dimension,
             request_timeout_seconds=self.config.llm_request_timeout_seconds,
         )
-        self._assert_embedding_profile_consistent()
+        self._write_embedding_profile()
 
         self.parser = SkillParser()
         self.sanitizer = DataSanitizer()
@@ -149,37 +149,14 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
 
         self.harness = HarnessService(self.db)
 
-    def _assert_embedding_profile_consistent(self) -> None:
-        """
-        Enforce single embedding family in one service data directory.
-
-        Mixing vectors from different embedding backends/models causes retrieval
-        quality collapse because cosine similarity is no longer comparable.
-        """
+    def _write_embedding_profile(self) -> None:
+        """Persist current embedding settings for observability (no consistency enforcement)."""
         profile_file = self.config.models_dir / "embedding_profile.json"
         current = {
             "backend": self.config.embedding_backend,
             "model": self.config.embedding_model,
             "dimension": int(self.embedding.dimension),
         }
-        if not profile_file.exists():
-            profile_file.write_text(
-                json.dumps(current, ensure_ascii=True, indent=2), encoding="utf-8"
-            )
-            return
-        try:
-            existing = json.loads(profile_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            raise RuntimeError(
-                f"invalid embedding profile at {profile_file}: {e}"
-            ) from e
-        if (
-            str(existing.get("backend")) != str(current["backend"])
-            or str(existing.get("model")) != str(current["model"])
-            or int(existing.get("dimension", 0) or 0) != int(current["dimension"])
-        ):
-            raise RuntimeError(
-                "Embedding config mismatch with existing data. "
-                "A single Ultron data directory must use one embedding backend/model/dimension. "
-                "Run reset_all() before switching embedding settings."
-            )
+        profile_file.write_text(
+            json.dumps(current, ensure_ascii=True, indent=2), encoding="utf-8"
+        )
