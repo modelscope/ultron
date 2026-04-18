@@ -235,7 +235,11 @@ git clone https://github.com/modelscope/ultron.git
 cd ultron
 pip install -e .
 
-# Set your DashScope API Key (required for LLM + embeddings)
+# Configure OpenAI-compatible LLM and set DashScope API Key for embedding
+echo 'ULTRON_LLM_PROVIDER=dashscope' >> ~/.ultron/.env
+echo 'ULTRON_MODEL=qwen3.5-flash' >> ~/.ultron/.env
+echo 'ULTRON_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1' >> ~/.ultron/.env
+echo 'ULTRON_API_KEY=your-key' >> ~/.ultron/.env
 echo 'DASHSCOPE_API_KEY=your-key' >> ~/.ultron/.env
 
 # Start the server (~/.ultron/.env loads on ultron import)

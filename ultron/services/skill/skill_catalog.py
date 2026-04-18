@@ -52,8 +52,10 @@ class SkillCatalogService:
         else:
             cap = min(self.config.llm_max_input_tokens, 32_768)
             self._llm = LLMService(
+                provider=self.config.llm_provider,
                 model=self.config.skill_category_llm_model,
-                api_url=self.config.llm_api_url,
+                base_url=self.config.llm_base_url,
+                api_key=self.config.llm_api_key,
                 max_input_tokens=cap,
                 prompt_reserve_tokens=self.config.llm_prompt_reserve_tokens,
                 tiktoken_encoding=self.config.llm_token_count_encoding,

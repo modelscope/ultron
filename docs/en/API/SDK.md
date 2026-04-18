@@ -25,7 +25,10 @@ from ultron import UltronConfig
 
 config = UltronConfig(
     data_dir="~/.my-ultron",
-    llm_model="qwen3.5-flash",
+    llm_provider="openai",
+    llm_model="gpt-5",
+    llm_base_url="https://api.openai.com/v1",
+    llm_api_key="your-api-key",
 )
 ultron = Ultron(config=config)
 ```

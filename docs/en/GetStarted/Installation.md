@@ -26,7 +26,8 @@ Core dependencies (see `requirements.txt`):
 | `uvicorn` | ASGI server |
 | `pydantic` | Validation |
 | `tiktoken` | Token counting |
-| `dashscope` | LLM and text embeddings |
+| `dashscope` | Text embeddings |
+| `openai` | OpenAI-compatible LLM access |
 
 ## Runtime
 
@@ -39,28 +40,34 @@ Ultron primarily calls LLM APIs, so a CPU-only machine is enough.
 
 ## Environment variables
 
-Smart ingestion and LLM-based classification need a DashScope API key (`DASHSCOPE_API_KEY`, mapped to `UltronConfig.dashscope_api_key`). **Recommended**: add one line `DASHSCOPE_API_KEY=...` to `~/.ultron/.env` alongside any `ULTRON_*` keys; when you construct `Ultron`, the value is synced into the process environment for the DashScope SDK.
+Smart ingestion and LLM-based classification need OpenAI-compatible LLM config. **Recommended**: set `ULTRON_LLM_PROVIDER`, `ULTRON_MODEL`, `ULTRON_BASE_URL`, and `ULTRON_API_KEY` in `~/.ultron/.env`. Embeddings still rely on `DASHSCOPE_API_KEY`.
 
 You can also export in the shell for one-off debugging:
 
 ```shell
-export DASHSCOPE_API_KEY="your-api-key"
+export ULTRON_LLM_PROVIDER="openai"
+export ULTRON_MODEL="gpt-5"
+export ULTRON_BASE_URL="https://api.openai.com/v1"
+export ULTRON_API_KEY="your-api-key"
 ```
 
 Using `~/.ultron/.env` requires `python-dotenv`; see the repo root `.env.example`. Importing `ultron` only auto-loads `~/.ultron/.env` (see [Configuration](../Components/Config.md)). In systemd, Docker, etc., inject the same variable names.
 
 Other optional variables (full `ULTRON_*` list in [Configuration](../Components/Config.md)); constructor arguments to `UltronConfig(...)` override the environment.
 
-### DashScope / models
+### Models
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ULTRON_EMBEDDING_MODEL` | TextEmbedding model name | `text-embedding-v4` |
+| `ULTRON_EMBEDDING_BACKEND` | Embedding backend (`dashscope` or `local`) | `dashscope` |
 | `ULTRON_EMBEDDING_DIMENSION` | Vector dimension | `1024` |
-| `ULTRON_LLM_MODEL` | LLM for smart ingestion and extraction | `qwen3.5-flash` |
+| `ULTRON_LLM_PROVIDER` | OpenAI-compatible provider selector | `dashscope` |
+| `ULTRON_MODEL` | LLM for smart ingestion and extraction | `qwen3.5-flash` |
 | `ULTRON_MEMORY_CATEGORY_MODEL` | LLM for memory type classification | `qwen3.5-flash` |
 | `ULTRON_SKILL_CATEGORY_MODEL` | LLM for skill taxonomy | `qwen3.5-flash` |
-| `ULTRON_LLM_API_URL` | DashScope-compatible API base | `https://dashscope.aliyuncs.com/api/v1` |
+| `ULTRON_BASE_URL` | OpenAI-compatible API base | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `ULTRON_API_KEY` | LLM API key | `""` |
 
 ### LLM request control
 
@@ -115,6 +122,8 @@ Other optional variables (full `ULTRON_*` list in [Configuration](../Components/
 | `ULTRON_ARCHIVE_RAW_UPLOADS` | Archive ingest files, ingest_text payloads, skill uploads (not `upload_memory`) | `1` |
 
 More fields (async embedding queue, hot summary caps, etc.) are documented in [Configuration](../Components/Config.md).
+
+> Important: one `ULTRON_DATA_DIR` can only use one embedding backend/model combination. Before switching embedding backend or model, run `reset_all()`; otherwise startup validation will fail to prevent mixed vectors and retrieval anomalies.
 
 ## Run the service
 

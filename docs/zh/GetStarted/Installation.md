@@ -28,7 +28,8 @@ pip install -e .
 | `uvicorn`   | ASGI 服务器            |
 | `pydantic`  | 数据验证                |
 | `tiktoken`  | Token 计数            |
-| `dashscope` | LLM + TextEmbedding |
+| `dashscope` | TextEmbedding |
+| `openai` | OpenAI-compatible LLM |
 
 
 ## 运行环境
@@ -44,29 +45,35 @@ Ultron 主要使用 LLM API，因此只需 CPU 环境即可运行。
 
 ## 环境变量
 
-智能摄取与 LLM 分类需要配置 DashScope API Key（`DASHSCOPE_API_KEY`，对应 `UltronConfig.dashscope_api_key`）。**推荐**在 `**~/.ultron/.env`** 中写入一行 `DASHSCOPE_API_KEY=...`，与各项 `ULTRON_`* 同级；导入并构造 `Ultron` 时会从配置同步到进程环境供 DashScope SDK 使用。
+智能摄取与 LLM 分类需要配置 OpenAI-compatible LLM 参数。**推荐**在 `**~/.ultron/.env`** 中设置 `ULTRON_LLM_PROVIDER`、`ULTRON_MODEL`、`ULTRON_BASE_URL`、`ULTRON_API_KEY`。向量嵌入仍使用 `DASHSCOPE_API_KEY`。
 
 也可在 shell 中导出（适用于一次性调试）：
 
 ```shell
-export DASHSCOPE_API_KEY="your-api-key"
+export ULTRON_LLM_PROVIDER="openai"
+export ULTRON_MODEL="gpt-5"
+export ULTRON_BASE_URL="https://api.openai.com/v1"
+export ULTRON_API_KEY="your-api-key"
 ```
 
 使用 `**~/.ultron/.env**` 需已安装 `python-dotenv`；可参考仓库根目录的 `.env.example`。导入 `ultron` 时仅自动加载 `**~/.ultron/.env**`（见 [配置文档](../Components/Config.md)）。在 systemd、Docker 等环境中也可注入同名环境变量。
 
 其他可选环境变量（*完整 `ULTRON_` 列表**见 [配置文档](../Components/Config.md)，代码里 `UltronConfig(...)` 入参会覆盖环境变量）。
 
-### DashScope / 模型
+### 模型
 
 
 | 变量                             | 说明                  | 默认值                                     |
 | ------------------------------ | ------------------- | --------------------------------------- |
 | `ULTRON_EMBEDDING_MODEL`       | TextEmbedding 模型名   | `text-embedding-v4`                     |
+| `ULTRON_EMBEDDING_BACKEND`     | 嵌入后端（`dashscope` 或 `local`） | `dashscope`                     |
 | `ULTRON_EMBEDDING_DIMENSION`   | 向量维度                | `1024`                                  |
-| `ULTRON_LLM_MODEL`             | 智能摄取与记忆提取所用 LLM     | `qwen3.5-flash`                          |
+| `ULTRON_LLM_PROVIDER`          | OpenAI-compatible 提供方标识 | `dashscope`                          |
+| `ULTRON_MODEL`                 | 智能摄取与记忆提取所用 LLM     | `qwen3.5-flash`                          |
 | `ULTRON_MEMORY_CATEGORY_MODEL` | 记忆类型分类所用 LLM        | `qwen3.5-flash`                         |
 | `ULTRON_SKILL_CATEGORY_MODEL`  | 技能分类所用 LLM          | `qwen3.5-flash`                         |
-| `ULTRON_LLM_API_URL`           | DashScope 兼容 API 地址 | `https://dashscope.aliyuncs.com/api/v1` |
+| `ULTRON_BASE_URL`              | OpenAI-compatible API 地址 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `ULTRON_API_KEY`               | LLM API Key | `""` |
 
 
 ### LLM 请求控制
@@ -132,6 +139,8 @@ export DASHSCOPE_API_KEY="your-api-key"
 
 
 更多字段（异步嵌入队列、热点摘要条数等）见 [配置文档](../Components/Config.md)。
+
+> 注意：同一个 `ULTRON_DATA_DIR` 只能使用一种 embedding 后端与模型组合。切换 embedding 后端或模型前请先执行 `reset_all`，否则会触发启动校验失败，避免混合向量导致检索异常。
 
 ## 启动服务
 

@@ -15,18 +15,18 @@ def _char_tokens(s: str) -> int:
     return len(s)
 
 
-class TestDashscopeUserMessages(unittest.TestCase):
+class TestUserMessages(unittest.TestCase):
     """
-    LLMService adapter without real DashScope HTTP.
+    LLMService adapter without real OpenAI HTTP.
 
-    Static message shape for MultiModalConversation.
+    Static message shape for Chat Completions.
     """
 
-    def test_wraps_prompt_as_user_multimodal_content(self):
-        msgs = LLMService.dashscope_user_messages("hello")
+    def test_wraps_prompt_as_user_content(self):
+        msgs = LLMService.user_messages("hello")
         self.assertEqual(len(msgs), 1)
         self.assertEqual(msgs[0]["role"], "user")
-        self.assertEqual(msgs[0]["content"], [{"text": "hello"}])
+        self.assertEqual(msgs[0]["content"], "hello")
 
 
 class TestUserTextTokenBudget(unittest.TestCase):
@@ -96,19 +96,19 @@ class TestParseJsonResponse(unittest.TestCase):
 
 
 class TestGetInfoAndAvailability(unittest.TestCase):
-    """get_info and is_available reflect env and HAS_DASHSCOPE."""
+    """get_info and is_available reflect env and HAS_OPENAI."""
 
     def test_get_info_keys(self):
         svc = LLMService(
             model="m1",
-            api_url="https://example.com",
+            base_url="https://example.com/v1",
             count_tokens=_char_tokens,
         )
         info = svc.get_info()
         self.assertEqual(info["model"], "m1")
-        self.assertEqual(info["api_url"], "https://example.com")
+        self.assertEqual(info["base_url"], "https://example.com/v1")
         self.assertIn("is_available", info)
-        self.assertIn("has_dashscope", info)
+        self.assertIn("has_openai", info)
         self.assertEqual(info["max_input_tokens"], 200_000)
         self.assertEqual(info["prompt_reserve_tokens"], 8192)
         self.assertEqual(info["max_retries"], 2)
@@ -118,58 +118,59 @@ class TestGetInfoAndAvailability(unittest.TestCase):
 class TestCallRetries(unittest.TestCase):
     """call retries on failure then returns text from a later attempt."""
 
-    @patch.object(llm_mod, "HAS_DASHSCOPE", True)
+    @patch.object(llm_mod, "HAS_OPENAI", True)
+    @patch("ultron.core.llm_service.OpenAI")
     @patch("ultron.core.llm_service.time.sleep")
-    @patch("ultron.core.llm_service.dashscope.MultiModalConversation.call")
-    def test_retries_then_succeeds(self, mock_call, _sleep):
+    def test_retries_then_succeeds(self, _sleep, mock_openai):
         svc = LLMService(
             count_tokens=_char_tokens,
             max_retries=2,
             retry_base_delay_seconds=0.01,
         )
-        bad = MagicMock()
-        bad.output = None
-        good = MagicMock()
-        good.output = {
-            "choices": [
-                {"message": {"content": [{"text": '{"ok": true}'}]}},
-            ],
-        }
-        mock_call.side_effect = [RuntimeError("timeout"), bad, good]
+        client = MagicMock()
+        bad = MagicMock(choices=[])
+        good_msg = MagicMock()
+        good_msg.content = '{"ok": true}'
+        good_choice = MagicMock(message=good_msg)
+        good = MagicMock(choices=[good_choice])
+        client.chat.completions.create.side_effect = [RuntimeError("timeout"), bad, good]
+        mock_openai.return_value = client
 
         with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "k"}):
-            text = svc.call(LLMService.dashscope_user_messages("hi"))
+            text = svc.call(LLMService.user_messages("hi"))
 
         self.assertEqual(text, '{"ok": true}')
-        self.assertEqual(mock_call.call_count, 3)
+        self.assertEqual(client.chat.completions.create.call_count, 3)
 
-    @patch.object(llm_mod, "HAS_DASHSCOPE", True)
+    @patch.object(llm_mod, "HAS_OPENAI", True)
+    @patch("ultron.core.llm_service.OpenAI")
     @patch("ultron.core.llm_service.time.sleep")
-    @patch("ultron.core.llm_service.dashscope.MultiModalConversation.call")
-    def test_all_attempts_fail_returns_none(self, mock_call, _sleep):
+    def test_all_attempts_fail_returns_none(self, _sleep, mock_openai):
         svc = LLMService(
             count_tokens=_char_tokens,
             max_retries=2,
             retry_base_delay_seconds=0.01,
         )
-        mock_call.side_effect = RuntimeError("down")
+        client = MagicMock()
+        client.chat.completions.create.side_effect = RuntimeError("down")
+        mock_openai.return_value = client
 
         with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "k"}):
-            text = svc.call(LLMService.dashscope_user_messages("hi"))
+            text = svc.call(LLMService.user_messages("hi"))
 
         self.assertIsNone(text)
-        self.assertEqual(mock_call.call_count, 3)
+        self.assertEqual(client.chat.completions.create.call_count, 3)
 
 
-class TestCallWithoutDashscope(unittest.TestCase):
-    """call short-circuits when dashscope or API key is missing."""
+class TestCallWithoutOpenAI(unittest.TestCase):
+    """call short-circuits when openai or API key is missing."""
 
-    def test_returns_none_when_no_dashscope(self):
+    def test_returns_none_when_no_openai(self):
         svc = LLMService(count_tokens=_char_tokens)
-        with patch.object(llm_mod, "HAS_DASHSCOPE", False):
+        with patch.object(llm_mod, "HAS_OPENAI", False):
             self.assertIsNone(svc.call([]))
 
-    @patch.object(llm_mod, "HAS_DASHSCOPE", True)
+    @patch.object(llm_mod, "HAS_OPENAI", True)
     def test_returns_none_without_api_key(self):
         svc = LLMService(count_tokens=_char_tokens)
         with patch.dict(os.environ, {}, clear=True):

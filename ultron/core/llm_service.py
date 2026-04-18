@@ -7,10 +7,10 @@ import time
 from typing import Any, Callable, Optional
 
 try:
-    import dashscope
-    HAS_DASHSCOPE = True
+    from openai import OpenAI
+    HAS_OPENAI = True
 except ImportError:
-    HAS_DASHSCOPE = False
+    HAS_OPENAI = False
 
 from ..utils.token_budget import get_token_counter
 
@@ -40,7 +40,7 @@ def _parse_first_json_value(text: str) -> Optional[Any]:
 
 class LLMService:
     """
-    LLM adapter wrapping the DashScope MultiModalConversation API.
+    LLM adapter for OpenAI-compatible chat completion APIs.
 
     Pure infrastructure: connection, call, response parsing, token budgeting.
     Business logic (memory extraction, merging, classification, skill generation)
@@ -49,8 +49,10 @@ class LLMService:
 
     def __init__(
         self,
+        provider: str = "dashscope",
         model: str = "qwen3.5-flash",
-        api_url: str = "https://dashscope.aliyuncs.com/api/v1",
+        base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key: str = "",
         max_input_tokens: int = 200_000,
         prompt_reserve_tokens: int = 8192,
         tiktoken_encoding: str = "cl100k_base",
@@ -59,58 +61,52 @@ class LLMService:
         max_retries: int = 2,
         retry_base_delay_seconds: float = 1.0,
     ):
+        self.provider = (provider or "openai").strip().lower()
         self.model = model
-        self.api_url = api_url
+        self.base_url = base_url
+        self.api_key = (api_key or "").strip()
         self.max_input_tokens = int(max_input_tokens)
         self.prompt_reserve_tokens = int(prompt_reserve_tokens)
         self.request_timeout_seconds = max(30, int(request_timeout_seconds))
         self.max_retries = max(0, int(max_retries))
         self.retry_base_delay_seconds = max(0.0, float(retry_base_delay_seconds))
         self._count_tokens = count_tokens or get_token_counter(tiktoken_encoding)
+        self._client = None
+        self._client_api_key = ""
 
-        if HAS_DASHSCOPE:
-            dashscope.base_http_api_url = api_url
+    @staticmethod
+    def user_messages(prompt: str) -> list:
+        return [{"role": "user", "content": prompt}]
 
     @staticmethod
     def dashscope_user_messages(prompt: str) -> list:
-        return [{"role": "user", "content": [{"text": prompt}]}]
+        """Backward-compatible alias for previous API shape."""
+        return LLMService.user_messages(prompt)
 
     def user_text_token_budget(self, prompt_prefix: str) -> int:
         """Return the token budget available for user-supplied text."""
         overhead = self._count_tokens(prompt_prefix)
         return max(self.max_input_tokens - self.prompt_reserve_tokens - overhead, 256)
 
+    def _resolved_api_key(self) -> str:
+        if self.api_key:
+            return self.api_key
+        if self.provider == "dashscope":
+            return os.environ.get("DASHSCOPE_API_KEY", "").strip()
+        return os.environ.get("OPENAI_API_KEY", "").strip()
+
     def _message_text_from_response(self, response) -> Optional[str]:
         if not response:
             return None
-        output = getattr(response, "output", None)
-        if output is None:
-            logger.warning(
-                "LLM response has no output (status_code=%r, message=%r)",
-                getattr(response, "status_code", None),
-                getattr(response, "message", None),
-            )
-            return None
-        choices = (
-            output.get("choices") if isinstance(output, dict)
-            else getattr(output, "choices", None)
-        ) or []
+        choices = getattr(response, "choices", None) or []
         if not choices:
             return None
         first = choices[0]
-        if not isinstance(first, dict):
+        message = getattr(first, "message", None)
+        if message is None:
             return None
-        message = first.get("message")
-        if not isinstance(message, dict):
-            message = {}
-        content = message.get("content", [])
-        if isinstance(content, list):
-            for item in content:
-                if isinstance(item, dict) and "text" in item:
-                    return item["text"]
-        elif isinstance(content, str):
-            return content
-        return None
+        content = getattr(message, "content", None)
+        return content if isinstance(content, str) else None
 
     def call(self, messages: list) -> Optional[str]:
         """
@@ -120,25 +116,33 @@ class LLMService:
         attempts (first call plus ``max_retries`` retries) with exponential backoff:
         ``retry_base_delay_seconds * 2**attempt``.
         """
-        if not HAS_DASHSCOPE:
-            logger.warning("dashscope not installed, LLM service unavailable")
+        if not HAS_OPENAI:
+            logger.warning("openai package not installed, LLM service unavailable")
             return None
 
-        key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
+        key = self._resolved_api_key()
         if not key:
-            logger.warning("DASHSCOPE_API_KEY not set")
+            logger.warning(
+                "%s API key is not set",
+                "DASHSCOPE_API_KEY" if self.provider == "dashscope" else "OPENAI_API_KEY",
+            )
             return None
+        if self._client is None or self._client_api_key != key:
+            self._client = OpenAI(
+                api_key=key,
+                base_url=self.base_url,
+                timeout=self.request_timeout_seconds,
+            )
+            self._client_api_key = key
 
         attempts = self.max_retries + 1
         last_reason = ""
 
         for attempt in range(attempts):
             try:
-                response = dashscope.MultiModalConversation.call(
-                    api_key=key,
+                response = self._client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    request_timeout=self.request_timeout_seconds,
                 )
                 text = self._message_text_from_response(response)
                 if text is not None:
@@ -148,7 +152,7 @@ class LLMService:
                     "LLM call returned no text (attempt %s/%s, status=%r)",
                     attempt + 1,
                     attempts,
-                    getattr(response, "status_code", None) if response else None,
+                    None,
                 )
             except Exception as e:
                 last_reason = str(e)
@@ -204,15 +208,16 @@ class LLMService:
 
     @property
     def is_available(self) -> bool:
-        """Return True if dashscope is installed and DASHSCOPE_API_KEY is set."""
-        return HAS_DASHSCOPE and bool(os.environ.get("DASHSCOPE_API_KEY", "").strip())
+        """Return True if openai is installed and selected provider API key is set."""
+        return HAS_OPENAI and bool(self._resolved_api_key())
 
     def get_info(self) -> dict:
         return {
             "model": self.model,
-            "api_url": self.api_url,
+            "provider": self.provider,
+            "base_url": self.base_url,
             "is_available": self.is_available,
-            "has_dashscope": HAS_DASHSCOPE,
+            "has_openai": HAS_OPENAI,
             "max_input_tokens": self.max_input_tokens,
             "prompt_reserve_tokens": self.prompt_reserve_tokens,
             "request_timeout_seconds": self.request_timeout_seconds,

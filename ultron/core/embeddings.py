@@ -5,6 +5,7 @@ from http import HTTPStatus
 from typing import List, Union
 
 HAS_NUMPY = importlib.util.find_spec("numpy") is not None
+HAS_SENTENCE_TRANSFORMERS = importlib.util.find_spec("sentence_transformers") is not None
 
 try:
     import dashscope
@@ -16,28 +17,62 @@ except ImportError:
 
 class EmbeddingService:
     """
-    DashScope TextEmbedding client: model default text-embedding-v4, requires DASHSCOPE_API_KEY.
+    Embedding client with two backends:
+    - dashscope: default TextEmbedding API, requires DASHSCOPE_API_KEY.
+    - local: sentence-transformers model loaded locally.
 
-    Raises RuntimeError when dashscope is missing, the key is unset, or the API returns an error.
+    Raises RuntimeError when required dependency/key is missing or backend call fails.
     Empty embedding input raises ValueError from embed_text.
     """
 
     def __init__(
         self,
+        backend: str = "dashscope",
         model_name: str = "text-embedding-v4",
         *,
         embedding_dimension_hint: int = 1024,
         request_timeout_seconds: int = 300,
     ):
-        if not HAS_DASHSCOPE:
+        self._backend = (backend or "dashscope").strip().lower()
+        if self._backend not in {"dashscope", "local"}:
             raise RuntimeError(
-                "dashscope is not installed; run: pip install dashscope"
+                f"unsupported embedding backend: {self._backend}, expected dashscope or local"
             )
+
         self.model_name = model_name
-        self._backend = "dashscope"
         self._request_timeout_seconds = max(30, int(request_timeout_seconds))
         env_dim = os.environ.get("ULTRON_EMBEDDING_DIMENSION", "").strip()
         self._dimension = int(env_dim) if env_dim else int(embedding_dimension_hint)
+        self._local_model = None
+
+        if self._backend == "dashscope":
+            if not HAS_DASHSCOPE:
+                raise RuntimeError(
+                    "dashscope is not installed; run: pip install dashscope"
+                )
+        else:
+            self._init_local_model()
+
+    def _init_local_model(self) -> None:
+        if not HAS_SENTENCE_TRANSFORMERS:
+            raise RuntimeError(
+                "sentence-transformers is not installed; run: pip install sentence-transformers transformers"
+            )
+        try:
+            from sentence_transformers import SentenceTransformer
+        except Exception as e:
+            raise RuntimeError(f"failed to import sentence-transformers: {e}") from e
+        try:
+            self._local_model = SentenceTransformer(self.model_name)
+            dim = getattr(self._local_model, "get_sentence_embedding_dimension", None)
+            if callable(dim):
+                got = dim()
+                if got:
+                    self._dimension = int(got)
+        except Exception as e:
+            raise RuntimeError(
+                f"failed to load local embedding model '{self.model_name}': {e}"
+            ) from e
 
     @staticmethod
     def _require_api_key() -> None:
@@ -91,6 +126,14 @@ class EmbeddingService:
     def embed_text(self, text: str) -> List[float]:
         if not text or not text.strip():
             raise ValueError("cannot embed empty text")
+        if self._backend == "local":
+            assert self._local_model is not None
+            rows = self._local_model.encode([text], convert_to_numpy=False)
+            if not rows:
+                raise RuntimeError("local embedding model returned no vectors")
+            vec = [float(x) for x in rows[0]]
+            self._dimension = len(vec)
+            return vec
         rows = self._embed_dashscope([text])
         if not rows:
             raise RuntimeError("DashScope TextEmbedding returned no vectors")
@@ -100,6 +143,13 @@ class EmbeddingService:
         cleaned = [t if t and t.strip() else " " for t in texts]
         if not cleaned:
             return []
+        if self._backend == "local":
+            assert self._local_model is not None
+            rows = self._local_model.encode(cleaned, convert_to_numpy=False)
+            out = [[float(x) for x in row] for row in rows]
+            if out:
+                self._dimension = len(out[0])
+            return out
         return self._embed_dashscope(cleaned)
 
     @staticmethod
@@ -137,6 +187,8 @@ class EmbeddingService:
         return dot_product / (norm_a * norm_b)
 
     def is_available(self) -> bool:
+        if self._backend == "local":
+            return self._local_model is not None
         return bool(os.environ.get("DASHSCOPE_API_KEY", "").strip()) and HAS_DASHSCOPE
 
     def get_model_info(self) -> dict:
@@ -146,6 +198,7 @@ class EmbeddingService:
             "dimension": self._dimension,
             "is_available": self.is_available(),
             "has_dashscope": HAS_DASHSCOPE,
+            "has_sentence_transformers": HAS_SENTENCE_TRANSFORMERS,
             "has_numpy": HAS_NUMPY,
             "request_timeout_seconds": self._request_timeout_seconds,
         }
