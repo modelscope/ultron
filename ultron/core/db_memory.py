@@ -59,6 +59,19 @@ class _MemoryMixin:
                 return self._row_to_memory_dict(row)
             return None
 
+    def get_memory_records_by_ids(self, memory_ids: List[str]) -> List[dict]:
+        """Batch-fetch memory rows by id in one query. Order is not preserved."""
+        if not memory_ids:
+            return []
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" * len(memory_ids))
+            cursor.execute(
+                f"SELECT * FROM memory_records WHERE id IN ({placeholders})",
+                memory_ids,
+            )
+            return [self._row_to_memory_dict(row) for row in cursor.fetchall()]
+
     def get_memory_records_by_tier(
         self,
         tier: str,

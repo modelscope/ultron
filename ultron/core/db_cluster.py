@@ -3,6 +3,7 @@ import json
 import pickle
 import sqlite3
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from typing import List, Optional, Tuple
 
@@ -91,21 +92,59 @@ class _ClusterMixin:
             row = cursor.fetchone()
             if not row:
                 return None
-            return self._row_to_cluster_dict(row)
+            cursor.execute(
+                "SELECT memory_id FROM cluster_members WHERE cluster_id = ? ORDER BY added_at",
+                (cluster_id,),
+            )
+            memory_ids = [r["memory_id"] for r in cursor.fetchall()]
+            return self._row_to_cluster_dict(row, memory_ids)
 
     def get_all_clusters(self) -> List[dict]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM knowledge_clusters ORDER BY last_updated_at DESC")
-            return [self._row_to_cluster_dict(row) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
+            if not rows:
+                return []
+            by_cluster = self._members_by_cluster_id(conn)
+            return [self._row_to_cluster_dict(row, by_cluster.get(row["cluster_id"], [])) for row in rows]
+
+    def get_cluster_dicts_ready_for_crystallization(self, min_members: int) -> List[dict]:
+        """Clusters with at least ``min_members`` and no skill yet (DB-side filter)."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT k.*
+                FROM knowledge_clusters k
+                INNER JOIN (
+                    SELECT cluster_id
+                    FROM cluster_members
+                    GROUP BY cluster_id
+                    HAVING COUNT(*) >= ?
+                ) m ON m.cluster_id = k.cluster_id
+                WHERE (k.skill_slug IS NULL OR k.skill_slug = '')
+                ORDER BY k.last_updated_at DESC
+                """,
+                (min_members,),
+            )
+            rows = cursor.fetchall()
+            if not rows:
+                return []
+            by_cluster = self._members_by_cluster_id(conn)
+            return [self._row_to_cluster_dict(row, by_cluster.get(row["cluster_id"], [])) for row in rows]
 
     def get_clusters_with_centroids(self) -> List[Tuple[dict, List[float]]]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM knowledge_clusters WHERE centroid IS NOT NULL")
+            rows = cursor.fetchall()
+            if not rows:
+                return []
+            by_cluster = self._members_by_cluster_id(conn)
             results = []
-            for row in cursor.fetchall():
-                cluster_dict = self._row_to_cluster_dict(row)
+            for row in rows:
+                cluster_dict = self._row_to_cluster_dict(row, by_cluster.get(row["cluster_id"], []))
                 centroid = pickle.loads(row["centroid"]) if row["centroid"] else []
                 results.append((cluster_dict, centroid))
             return results
@@ -176,15 +215,22 @@ class _ClusterMixin:
             return row["cluster_id"] if row else None
 
     def count_cluster_members_since(self, cluster_id: str, since_skill_slug: str) -> int:
-        """Count members added after the cluster's skill was last crystallized."""
+        """Count members added after the last crystallization for this skill on this cluster."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Find the last evolution timestamp for this cluster
-            cursor.execute(
-                """SELECT MAX(timestamp) as last_evolve FROM evolution_records
-                   WHERE cluster_id = ? AND status IN ('crystallized', 'recrystallized')""",
-                (cluster_id,),
-            )
+            if since_skill_slug:
+                cursor.execute(
+                    """SELECT MAX(timestamp) as last_evolve FROM evolution_records
+                       WHERE cluster_id = ? AND skill_slug = ?
+                         AND status IN ('crystallized', 'recrystallized')""",
+                    (cluster_id, since_skill_slug),
+                )
+            else:
+                cursor.execute(
+                    """SELECT MAX(timestamp) as last_evolve FROM evolution_records
+                       WHERE cluster_id = ? AND status IN ('crystallized', 'recrystallized')""",
+                    (cluster_id,),
+                )
             row = cursor.fetchone()
             last_evolve = row["last_evolve"] if row and row["last_evolve"] else None
             if last_evolve:
@@ -245,7 +291,18 @@ class _ClusterMixin:
 
     # ── Row converters ──
 
-    def _row_to_cluster_dict(self, row: sqlite3.Row) -> dict:
+    @staticmethod
+    def _members_by_cluster_id(conn) -> dict:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT cluster_id, memory_id FROM cluster_members ORDER BY cluster_id, added_at",
+        )
+        by_cluster: dict = defaultdict(list)
+        for r in cursor.fetchall():
+            by_cluster[r["cluster_id"]].append(r["memory_id"])
+        return dict(by_cluster)
+
+    def _row_to_cluster_dict(self, row: sqlite3.Row, memory_ids: List[str]) -> dict:
         centroid = []
         if row["centroid"]:
             try:
@@ -258,18 +315,6 @@ class _ClusterMixin:
                 superseded = json.loads(row["superseded_slugs"])
             except (json.JSONDecodeError, TypeError):
                 superseded = []
-        # Fetch member IDs
-        memory_ids = []
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT memory_id FROM cluster_members WHERE cluster_id = ? ORDER BY added_at",
-                    (row["cluster_id"],),
-                )
-                memory_ids = [r["memory_id"] for r in cursor.fetchall()]
-        except Exception:
-            pass
         return {
             "cluster_id": row["cluster_id"],
             "topic": row["topic"],

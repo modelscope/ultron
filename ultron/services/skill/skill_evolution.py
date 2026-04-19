@@ -337,7 +337,7 @@ class SkillEvolutionEngine:
             return False
         checks = 0
         # Has multiple steps (numbered or bulleted)
-        step_patterns = re.findall(r'(?:^|\n)\s*(?:\d+[\.\)]\s|[-*]\s|#{1,3}\s)', content)
+        step_patterns = re.findall(r'(?:^|\n)\s*(?:\d+[\.\)]\s|[-*]\s)', content)
         if len(step_patterns) >= 3:
             checks += 1
         # Has trigger conditions
@@ -363,7 +363,14 @@ class SkillEvolutionEngine:
         evolution_count: int = 0,
     ) -> Optional[Skill]:
         try:
-            slug = self._slugify(name) or f"cluster-{cluster.cluster_id[:8]}"
+            base_slug = self._slugify(name) or f"cluster-{cluster.cluster_id[:8]}"
+            slug = base_slug
+            counter = 1
+            # Avoid (slug, version) collisions across clusters; do not use get_skill(slug)
+            # without version or re-crystallization would see the previous version as conflict.
+            while self.db.get_skill(slug, version=version):
+                slug = f"{base_slug}-{counter}"
+                counter += 1
 
             categories = ["general"]
             if self.catalog:

@@ -86,14 +86,10 @@ class KnowledgeClusterService:
 
     def get_clusters_ready_to_crystallize(self) -> List[KnowledgeCluster]:
         """Find clusters that have reached critical mass but have no skill yet."""
-        ready = []
-        for cluster_dict in self.db.get_all_clusters():
-            cluster = KnowledgeCluster.from_dict(cluster_dict)
-            if cluster.skill_slug:
-                continue  # Already crystallized
-            if cluster.size >= self.crystallization_threshold:
-                ready.append(cluster)
-        return ready
+        cluster_dicts = self.db.get_cluster_dicts_ready_for_crystallization(
+            self.crystallization_threshold,
+        )
+        return [KnowledgeCluster.from_dict(d) for d in cluster_dicts]
 
     def get_clusters_ready_to_recrystallize(self) -> List[KnowledgeCluster]:
         """Find clusters with enough new memories since last crystallization."""
@@ -166,15 +162,10 @@ class KnowledgeClusterService:
             return
 
         embeddings = []
-        for mid in member_ids:
-            record = self.db.get_memory_record(mid)
-            if record and record.get("embedding"):
-                import pickle
-                raw = record.get("embedding")
-                if isinstance(raw, bytes):
-                    raw = pickle.loads(raw)
-                if isinstance(raw, list) and raw:
-                    embeddings.append(raw)
+        for record in self.db.get_memory_records_by_ids(member_ids):
+            emb = record.get("embedding")
+            if isinstance(emb, list) and emb:
+                embeddings.append(emb)
 
         if not embeddings:
             return

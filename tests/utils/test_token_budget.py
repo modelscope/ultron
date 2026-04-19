@@ -24,10 +24,35 @@ class TestTruncateText(unittest.TestCase):
         text = "α" * 100
         out = truncate_text_to_token_limit(text, 10, _char_tokens)
         self.assertLessEqual(_char_tokens(out), 10)
-        # Truncated output should end with ellipsis marker
         self.assertTrue(out.endswith("…"))
-        # The prefix before the ellipsis must come from the original text
         self.assertTrue(text.startswith(out[:-1]))
+
+    def test_zero_max_tokens_returns_empty(self):
+        self.assertEqual(truncate_text_to_token_limit("hello", 0, _char_tokens), "")
+
+    def test_negative_max_tokens_returns_empty(self):
+        self.assertEqual(truncate_text_to_token_limit("hello", -5, _char_tokens), "")
+
+    def test_exact_fit_no_ellipsis(self):
+        text = "hello"
+        out = truncate_text_to_token_limit(text, 5, _char_tokens)
+        self.assertEqual(out, "hello")
+        self.assertFalse(out.endswith("…"))
+
+    def test_snaps_to_sentence_boundary(self):
+        text = "First sentence. Second sentence. Third sentence."
+        out = truncate_text_to_token_limit(text, 20, _char_tokens)
+        self.assertLessEqual(_char_tokens(out), 20)
+
+    def test_chinese_sentence_boundary(self):
+        text = "第一句话。第二句话。第三句话。"
+        out = truncate_text_to_token_limit(text, 10, _char_tokens)
+        self.assertLessEqual(_char_tokens(out), 10)
+
+    def test_single_char_max(self):
+        # With max_tokens=2, result fits within 2 chars (ellipsis takes 1)
+        out = truncate_text_to_token_limit("hello world", 2, _char_tokens)
+        self.assertLessEqual(_char_tokens(out), 2)
 
 
 class TestJoinMessages(unittest.TestCase):
@@ -48,6 +73,49 @@ class TestJoinMessages(unittest.TestCase):
         s = join_messages_lines_within_token_budget(msgs, 12, _char_tokens)
         self.assertLessEqual(_char_tokens(s), 12)
 
+    def test_join_full_skips_system_role(self):
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+        ]
+        s = join_messages_full_text(msgs)
+        self.assertNotIn("[system]:", s)
+        self.assertIn("[user]: hi", s)
+
+    def test_join_full_skips_empty_content(self):
+        msgs = [
+            {"role": "user", "content": ""},
+            {"role": "assistant", "content": "ok"},
+        ]
+        s = join_messages_full_text(msgs)
+        self.assertNotIn("[user]:", s)
+        self.assertIn("[assistant]: ok", s)
+
+    def test_budget_zero_returns_empty(self):
+        msgs = [{"role": "user", "content": "hello"}]
+        s = join_messages_lines_within_token_budget(msgs, 0, _char_tokens)
+        self.assertEqual(s, "")
+
+    def test_budget_fits_all(self):
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "yo"},
+        ]
+        s = join_messages_lines_within_token_budget(msgs, 1000, _char_tokens)
+        self.assertIn("[user]: hi", s)
+        self.assertIn("[assistant]: yo", s)
+
+    def test_budget_truncates_last_message(self):
+        msgs = [
+            {"role": "user", "content": "a" * 5},
+            {"role": "user", "content": "b" * 100},
+        ]
+        # Budget is tight enough that the second message must be truncated
+        s = join_messages_lines_within_token_budget(msgs, 50, _char_tokens)
+        self.assertIn("[user]: aaaaa", s)
+        # Second message should be truncated (not full 100 b's)
+        self.assertNotIn("b" * 100, s)
+
 
 class TestSplitWindows(unittest.TestCase):
     def test_single_chunk(self):
@@ -65,6 +133,33 @@ class TestSplitWindows(unittest.TestCase):
         self.assertGreaterEqual(len(chunks), 1)
         total_lines = join_messages_full_text([m for c in chunks for m in c])
         self.assertIn("aaaa", total_lines)
+
+    def test_empty_messages_returns_empty(self):
+        chunks = split_messages_into_token_windows([], 100, _char_tokens)
+        self.assertEqual(chunks, [])
+
+    def test_skips_system_messages(self):
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+        ]
+        chunks = split_messages_into_token_windows(msgs, 100, _char_tokens)
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0][0]["role"], "user")
+
+    def test_very_long_single_message_truncated(self):
+        msgs = [{"role": "user", "content": "x" * 1000}]
+        chunks = split_messages_into_token_windows(msgs, 50, _char_tokens)
+        self.assertEqual(len(chunks), 1)
+        # Content should be truncated to fit window
+        content = chunks[0][0]["content"]
+        self.assertLessEqual(len(content), 1000)
+
+    def test_multiple_chunks_cover_all_messages(self):
+        msgs = [{"role": "user", "content": f"msg{i}" * 5} for i in range(10)]
+        chunks = split_messages_into_token_windows(msgs, 30, _char_tokens)
+        total_msgs = sum(len(c) for c in chunks)
+        self.assertEqual(total_msgs, 10)
 
 
 if __name__ == "__main__":

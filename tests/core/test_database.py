@@ -284,12 +284,55 @@ class TestClusterMixin(unittest.TestCase):
         clusters = self.db.get_all_clusters()
         self.assertEqual(len(clusters), 2)
 
+    def test_get_all_clusters_includes_member_ids_without_n_plus_one(self):
+        self.db.save_cluster("c1", "t", centroid=[0.1])
+        self.db.add_cluster_member("c1", "m1")
+        self.db.add_cluster_member("c1", "m2")
+        clusters = self.db.get_all_clusters()
+        self.assertEqual(len(clusters[0]["memory_ids"]), 2)
+
+    def test_get_cluster_dicts_ready_for_crystallization(self):
+        self.db.save_cluster("c1", "t", centroid=[0.1])
+        for i in range(3):
+            self.db.add_cluster_member("c1", f"m{i}")
+        ready = self.db.get_cluster_dicts_ready_for_crystallization(3)
+        self.assertEqual(len(ready), 1)
+        self.assertEqual(len(ready[0]["memory_ids"]), 3)
+        self.db.update_cluster_skill("c1", "s")
+        self.assertEqual(len(self.db.get_cluster_dicts_ready_for_crystallization(3)), 0)
+
     def test_count_cluster_members_since_no_evolution(self):
         self.db.save_cluster("cid1", "t", centroid=[0.1])
         self.db.add_cluster_member("cid1", "m1")
         self.db.add_cluster_member("cid1", "m2")
         count = self.db.count_cluster_members_since("cid1", "some-skill")
         self.assertEqual(count, 2)
+
+    def test_count_cluster_members_since_uses_skill_slug_in_evolution(self):
+        self.db.save_cluster("cid1", "t", centroid=[0.1])
+        self.db.add_cluster_member("cid1", "m1")
+        self.db.add_cluster_member("cid1", "m2")
+        self.db.save_evolution_record(
+            skill_slug="my-skill",
+            cluster_id="cid1",
+            old_version=None,
+            new_version="1.0.0",
+            old_score=None,
+            new_score=0.8,
+            status="crystallized",
+            trigger="t",
+            memory_count=2,
+        )
+        self.db.add_cluster_member("cid1", "m3")
+        # SQLite CURRENT_TIMESTAMP is second-resolution; bump m3 so added_at > evolution ts.
+        with self.db._get_connection() as conn:
+            conn.execute(
+                """UPDATE cluster_members SET added_at = datetime('now', '+10 seconds')
+                   WHERE cluster_id = ? AND memory_id = ?""",
+                ("cid1", "m3"),
+            )
+        count = self.db.count_cluster_members_since("cid1", "my-skill")
+        self.assertEqual(count, 1)
 
     def test_save_evolution_record(self):
         self.db.save_cluster("cid1", "t", centroid=[0.1])
