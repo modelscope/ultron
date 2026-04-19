@@ -6,19 +6,10 @@ from enum import Enum
 from typing import Dict, List, Optional
 
 
-class SkillStatus(Enum):
-    """Lifecycle state of a published skill."""
-    ACTIVE = "active"
-    DEGRADED = "degraded"
-    PENDING_REVIEW = "pending_review"
-    ARCHIVED = "archived"
-
-
 class SourceType(Enum):
-    """How the skill was produced or curated."""
-    ERROR_LEARNING = "error_learning"
-    SECURITY_LEARNING = "security_learning"
-    GENERATION = "generation"
+    """How an internal skill row relates to Ultron's two skill pipelines."""
+    EVOLUTION = "evolution"  # crystallized from a knowledge cluster
+    CATALOG = "catalog"  # ModelScope Skill Hub catalog (imported / search)
 
 
 class Complexity(Enum):
@@ -62,21 +53,18 @@ class SkillMeta:
     published_at: int
     parent_version: Optional[str] = None
     embedding: Optional[List[float]] = None
-    status: SkillStatus = SkillStatus.ACTIVE
     cluster_id: Optional[str] = None
     evolution_count: int = 0
     structure_score: Optional[float] = None
 
     def to_dict(self) -> dict:
-        """Serialize for JSON APIs and storage."""
+        """JSON-serializable fields for APIs. Embeddings are not included (stored only in SQLite)."""
         return {
             "ownerId": self.owner_id,
             "slug": self.slug,
             "version": self.version,
             "publishedAt": self.published_at,
             "parentVersion": self.parent_version,
-            "embedding": self.embedding,
-            "status": self.status.value if isinstance(self.status, SkillStatus) else self.status,
             "clusterId": self.cluster_id,
             "evolutionCount": self.evolution_count,
             "structureScore": self.structure_score,
@@ -84,17 +72,14 @@ class SkillMeta:
 
     @classmethod
     def from_dict(cls, data: dict) -> "SkillMeta":
-        status = data.get("status", "active")
-        if isinstance(status, str):
-            status = SkillStatus(status)
+        """Hydrate from ``_meta.json`` or API dict. Ignores ``embedding`` (load from DB in code paths that need it)."""
         return cls(
             owner_id=data.get("ownerId", ""),
             slug=data.get("slug", ""),
             version=data.get("version", "1.0.0"),
             published_at=data.get("publishedAt", 0),
             parent_version=data.get("parentVersion"),
-            embedding=data.get("embedding"),
-            status=status,
+            embedding=None,
             cluster_id=data.get("clusterId"),
             evolution_count=data.get("evolutionCount", 0),
             structure_score=data.get("structureScore"),
@@ -230,7 +215,7 @@ class SkillFrontmatter:
 
     @property
     def source_type(self) -> str:
-        return self.ultron_metadata.get("source_type", "generation")
+        return self.ultron_metadata.get("source_type", "")
 
     def to_dict(self) -> dict:
         return {

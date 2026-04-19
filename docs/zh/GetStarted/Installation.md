@@ -1,9 +1,8 @@
 ---
-
-## slug: Installation
-
+slug: Installation
 title: 服务端部署
-description: Ultron (奥创) 服务端部署指南
+description: Ultron（奥创）服务端部署指南
+---
 
 # 服务端部署
 
@@ -69,9 +68,9 @@ export ULTRON_API_KEY="your-api-key"
 | `ULTRON_EMBEDDING_BACKEND`     | 嵌入后端（`dashscope` 或 `local`） | `dashscope`                     |
 | `ULTRON_EMBEDDING_DIMENSION`   | 向量维度                | `1024`                                  |
 | `ULTRON_LLM_PROVIDER`          | OpenAI-compatible 提供方标识 | `dashscope`                          |
-| `ULTRON_MODEL`                 | 智能摄取与记忆提取所用 LLM     | `qwen3.5-flash`                          |
-| `ULTRON_MEMORY_CATEGORY_MODEL` | 记忆类型分类所用 LLM        | `qwen3.5-flash`                         |
-| `ULTRON_SKILL_CATEGORY_MODEL`  | 技能分类所用 LLM          | `qwen3.5-flash`                         |
+| `ULTRON_MODEL`                 | 智能摄取与记忆提取所用 LLM     | `qwen3.6-flash`                          |
+| `ULTRON_MEMORY_CATEGORY_MODEL` | 记忆类型分类所用 LLM        | `qwen3.6-flash`                         |
+| `ULTRON_SKILL_CATEGORY_MODEL`  | 技能分类所用 LLM          | `qwen3.6-flash`                         |
 | `ULTRON_BASE_URL`              | OpenAI-compatible API 地址 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `ULTRON_API_KEY`               | LLM API Key | `""` |
 
@@ -122,7 +121,6 @@ export ULTRON_API_KEY="your-api-key"
 | `ULTRON_ENABLE_INTENT_ANALYSIS`     | 检索前意图分析（`0` 关闭）                      | `1`         |
 | `ULTRON_MEMORY_SEARCH_LIMIT`        | 记忆检索默认返回条数（未传 `limit` 时）             | `10`        |
 | `ULTRON_SKILL_SEARCH_LIMIT`         | 技能检索默认返回条数（未传 `limit` 时）             | `5`         |
-| `ULTRON_SKILL_AUTO_DETECT_LIMIT`    | 自动批量技能生成每次处理的 HOT 候选上限（未传 `limit` 时） | `5`         |
 | `ULTRON_DECAY_INTERVAL_HOURS`       | 后台衰减任务间隔（小时）                         | `6.0`       |
 | `ULTRON_DECAY_ALPHA`                | 时间新鲜度系数                              | `0.05`      |
 | `ULTRON_COLD_TTL_DAYS`              | COLD 保留天数（`0` 表示不删）                  | `30`        |

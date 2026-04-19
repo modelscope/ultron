@@ -141,7 +141,7 @@ class SkillRetriever:
                 "ultron": {
                     "categories": skill_dict.get("categories", []),
                     "complexity": skill_dict.get("complexity", "medium"),
-                    "source_type": skill_dict.get("source_type", "generation"),
+                    "source_type": skill_dict.get("source_type", ""),
                 }
             }
         )

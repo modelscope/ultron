@@ -1,9 +1,8 @@
 ---
-
-## slug: HttpAPI
-
+slug: HttpAPI
 title: HTTP API
-description: Ultron (奥创) HTTP API 参考
+description: Ultron（奥创）HTTP API 参考
+---
 
 # HTTP API
 
@@ -28,6 +27,12 @@ uvicorn ultron.server:app --host 0.0.0.0 --port 9999
 
 ```
 GET /
+```
+
+重定向到 `/dashboard`（HTTP 302）。
+
+```
+GET /health
 ```
 
 **响应**：
@@ -375,8 +380,10 @@ POST /skills/install
 ### 列出 Agent
 
 ```
-GET /harness/agents?user_id=u1
+GET /harness/agents
 ```
+
+需要 `Authorization: Bearer <token>` 认证。
 
 **响应**：
 
@@ -394,12 +401,13 @@ GET /harness/agents?user_id=u1
 DELETE /harness/agents
 ```
 
+需要 `Authorization: Bearer <token>` 认证。
+
 **请求体**：
 
 
 | 字段         | 类型     | 必填  | 说明   |
 | ---------- | ------ | --- | ---- |
-| `user_id`  | string | 是   | 用户标识 |
 | `agent_id` | string | 是   | 设备标识 |
 
 
@@ -411,12 +419,13 @@ DELETE /harness/agents
 POST /harness/sync/up
 ```
 
+需要 `Authorization: Bearer <token>` 认证。
+
 **请求体**：
 
 
 | 字段          | 类型     | 必填  | 说明                     |
 | ----------- | ------ | --- | ---------------------- |
-| `user_id`   | string | 是   | 用户标识                   |
 | `agent_id`  | string | 是   | 设备标识                   |
 | `product`   | string | 否   | Claw 产品名（默认 `nanobot`） |
 | `resources` | object | 是   | 工作空间文件 `{相对路径: 内容}`    |
@@ -444,12 +453,13 @@ POST /harness/sync/up
 POST /harness/sync/down
 ```
 
+需要 `Authorization: Bearer <token>` 认证。
+
 **请求体**：
 
 
 | 字段         | 类型     | 必填  | 说明   |
 | ---------- | ------ | --- | ---- |
-| `user_id`  | string | 是   | 用户标识 |
 | `agent_id` | string | 是   | 设备标识 |
 
 
@@ -458,8 +468,18 @@ POST /harness/sync/down
 ### 获取 Profile
 
 ```
-GET /harness/profile?user_id=u1&agent_id=d1
+GET /harness/profile?agent_id=d1
 ```
+
+需要 `Authorization: Bearer <token>` 认证。
+
+### 获取所有 Profile
+
+```
+GET /harness/profiles
+```
+
+需要 `Authorization: Bearer <token>` 认证。返回当前用户的所有 profile。
 
 ### 创建分享
 
@@ -467,12 +487,13 @@ GET /harness/profile?user_id=u1&agent_id=d1
 POST /harness/share
 ```
 
+需要 `Authorization: Bearer <token>` 认证。
+
 **请求体**：
 
 
 | 字段           | 类型     | 必填  | 说明                                   |
 | ------------ | ------ | --- | ------------------------------------ |
-| `user_id`    | string | 是   | 用户标识                                 |
 | `agent_id`   | string | 是   | 设备标识                                 |
 | `visibility` | string | 否   | `link`/`public`/`private`（默认 `link`） |
 
@@ -493,35 +514,21 @@ POST /harness/share
 }
 ```
 
-### 导入分享
-
-```
-POST /harness/share/import
-```
-
-**请求体**：
-
-
-| 字段                | 类型     | 必填  | 说明       |
-| ----------------- | ------ | --- | -------- |
-| `token`           | string | 是   | 分享 token |
-| `target_user_id`  | string | 是   | 目标用户标识   |
-| `target_agent_id` | string | 是   | 目标设备标识   |
-
-
-将分享快照导入为目标用户的 profile。
-
 ### 列出分享
 
 ```
-GET /harness/shares?user_id=u1
+GET /harness/shares
 ```
+
+需要 `Authorization: Bearer <token>` 认证。
 
 ### 删除分享
 
 ```
 DELETE /harness/share
 ```
+
+需要 `Authorization: Bearer <token>` 认证。
 
 **请求体**：
 
@@ -531,19 +538,308 @@ DELETE /harness/share
 | `token` | string | 是   | 分享 token |
 
 
+### 导出分享
+
+```
+GET /harness/share/export/{token}
+```
+
+返回 bash 安装脚本，用于导入分享的 agent 配置。
+
+
+| 参数        | 位置    | 类型     | 必填  | 说明                 |
+| --------- | ----- | ------ | --- | ------------------ |
+| `token`   | path  | string | 是   | 分享 token           |
+| `product` | query | string | 否   | 目标产品（默认 `nanobot`） |
+
+
+### 短码导入
+
+```
+GET /i/{code}
+```
+
+分享导出的短码别名，返回 bash 安装脚本。
+
+
+| 参数        | 位置    | 类型     | 必填  | 说明                 |
+| --------- | ----- | ------ | --- | ------------------ |
+| `code`    | path  | string | 是   | 6 位短码              |
+| `product` | query | string | 否   | 目标产品（默认 `nanobot`） |
+
+
+### 产品默认文件
+
+```
+GET /harness/defaults/{product}
+```
+
+返回指定产品（`nanobot`、`openclaw`、`hermes`）的默认工作空间文件。
+
+**响应**：
+
+```json
+{
+    "success": true,
+    "product": "nanobot",
+    "files": {"SOUL.md": "...", "AGENTS.md": "..."}
+}
+```
+
+---
+
+## 认证（Authentication）
+
+### 注册
+
+```
+POST /auth/register
+```
+
+**请求体**：
+
+
+| 字段         | 类型     | 必填  |
+| ---------- | ------ | --- |
+| `username` | string | 是   |
+| `password` | string | 是   |
+
+
+**响应**：
+
+```json
+{
+    "success": true,
+    "data": {
+        "username": "alice",
+        "token": "eyJ..."
+    }
+}
+```
+
+### 登录
+
+```
+POST /auth/login
+```
+
+**请求体**：
+
+
+| 字段         | 类型     | 必填  |
+| ---------- | ------ | --- |
+| `username` | string | 是   |
+| `password` | string | 是   |
+
+
+**响应**：
+
+```json
+{
+    "success": true,
+    "data": {
+        "username": "alice",
+        "token": "eyJ..."
+    }
+}
+```
+
+### 当前用户
+
+```
+GET /auth/me
+```
+
+需要 `Authorization: Bearer <token>` 认证。
+
+**响应**：
+
+```json
+{
+    "success": true,
+    "data": {
+        "username": "alice",
+        "created_at": "2026-04-06T12:00:00"
+    }
+}
+```
+
+---
+
+## Soul Presets（角色预设）
+
+### 列出预设
+
+```
+GET /harness/soul-presets
+```
+
+返回按分类分组的所有预设。
+
+**响应**：
+
+```json
+{
+    "success": true,
+    "data": {
+        "categories": [
+            {
+                "category": "creative",
+                "presets": [{"id": "poet", "name": "Poet", "emoji": "✍️", "description": "..."}]
+            }
+        ]
+    }
+}
+```
+
+### 获取预设详情
+
+```
+GET /harness/soul-presets/{preset_id}
+```
+
+返回完整预设内容（含 body）。
+
+### 构建角色资源
+
+```
+POST /harness/soul-presets/build
+```
+
+从选定预设构建合并后的工作空间资源，body 拆分为 `SOUL.md`、`AGENTS.md`、`IDENTITY.md`。
+
+**请求体**：
+
+```json
+{
+    "preset_ids": ["poet", "mentor"]
+}
+```
+
+**响应**：
+
+```json
+{
+    "success": true,
+    "data": {
+        "resources": {
+            "SOUL.md": "...",
+            "AGENTS.md": "...",
+            "IDENTITY.md": "..."
+        }
+    }
+}
+```
+
+---
+
+## Showcase（展示案例）
+
+### 列出案例
+
+```
+GET /harness/showcase?lang=zh
+```
+
+
+| 参数     | 位置    | 类型     | 必填  | 说明                   |
+| ------ | ----- | ------ | --- | -------------------- |
+| `lang` | query | string | 否   | `zh` 或 `en`（默认 `zh`） |
+
+
+### 获取案例详情
+
+```
+GET /harness/showcase/{slug}?lang=zh
+```
+
+按 slug 返回完整案例内容。
+
+---
+
+## Dashboard（仪表盘）
+
+### 仪表盘 UI
+
+```
+GET /dashboard
+```
+
+返回仪表盘 HTML 页面。SPA 路由（`/skills`、`/leaderboard`、`/quickstart`、`/harness`）同样返回此 HTML。
+
+### 概览
+
+```
+GET /dashboard/overview
+```
+
+```json
+{
+    "memory": {...},
+    "skills": {...}
+}
+```
+
+### 记忆列表
+
+```
+GET /dashboard/memories?q=docker&memory_type=error&tier=hot&sort=recent&page=1&page_size=20
+```
+
+所有查询参数均可选。返回分页记忆列表。
+
+### 技能列表
+
+```
+GET /dashboard/skills?q=python&source=internal&category=ai&page=1&page_size=20
+```
+
+所有查询参数均可选。返回分页技能列表。
+
+### 技能 Markdown
+
+```
+GET /dashboard/skills/internal/{slug}/skill-md
+```
+
+返回内部技能的原始 SKILL.md 内容。
+
+```json
+{
+    "slug": "my-skill",
+    "content": "# My Skill\n..."
+}
+```
+
+### 排行榜
+
+```
+GET /dashboard/leaderboard?limit=20
+```
+
+返回技能使用排行榜数据。
+
+### Agent 技能包
+
+```
+GET /dashboard/agent-skill-package
+```
+
+返回包含所有技能的 ZIP 文件，用于 agent 部署。
+
 ---
 
 ## 错误码
 
 
-| HTTP 状态码 | 说明                     |
-| -------- | ---------------------- |
-| 200      | 成功                     |
-| 400      | 请求参数错误                 |
-| 403      | 权限不足                   |
-| 404      | 资源不存在（如技能未找到）          |
-| 422      | 请求体验证失败（FastAPI）       |
-| 500      | 服务器内部错误                |
+| HTTP 状态码 | 说明               |
+| -------- | ---------------- |
+| 200      | 成功               |
+| 400      | 请求参数错误           |
+| 403      | 权限不足             |
+| 404      | 资源不存在（如技能未找到）    |
+| 422      | 请求体验证失败（FastAPI） |
+| 500      | 服务器内部错误          |
 
 
 ---

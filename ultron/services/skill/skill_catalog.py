@@ -73,7 +73,7 @@ class SkillCatalogService:
     def get_all_categories(self) -> List[CategoryInfo]:
         """All categories with active skill counts, sorted by count descending."""
         categories = self.db.get_all_categories()
-        skills = self.db.get_all_skills(status="active", limit=10000)
+        skills = self.db.get_all_skills(limit=10000)
 
         skill_counts = {}
         for skill in skills:

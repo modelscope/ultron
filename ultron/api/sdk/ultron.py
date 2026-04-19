@@ -12,7 +12,6 @@ from ...services.harness import HarnessService
 from ...services.memory import ConversationExtractor, MemoryService
 from ...services.skill import (
     SkillCatalogService,
-    SkillGeneratorService,
     SkillRetriever,
 )
 from ...services.smart_ingestion import SmartIngestionService
@@ -30,7 +29,7 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
     Ultron: collective intelligence system for assistant ecosystems (OpenClaw, Nanobot, etc.).
 
     Besides technical know-how, it supports general life-style shareable experience
-    (server-side classification) and skill distillation from memories.
+    (server-side classification) and skill evolution from knowledge clusters.
 
     API layers:
     - Memory Hub: ``upload_memory``, ``search_memories``, ``get_memory_details``.
@@ -104,15 +103,6 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
 
         self.catalog = SkillCatalogService(self.db, self.config)
 
-        self.skill_generator = SkillGeneratorService(
-            self.db,
-            self.storage,
-            self.embedding,
-            self.parser,
-            self.config,
-            llm_orchestrator=self.llm_orchestrator,
-            catalog=self.catalog,
-        )
         self.memory_service = MemoryService(
             self.db,
             self.embedding,
@@ -120,7 +110,6 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
             self.config,
             llm_service=self.llm_service,
             llm_orchestrator=self.llm_orchestrator,
-            skill_generator=self.skill_generator,
         )
 
         self.retriever = SkillRetriever(

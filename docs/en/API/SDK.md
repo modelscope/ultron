@@ -1,12 +1,12 @@
 ---
 slug: SDK
 title: Python SDK
-description: Ultron Python client reference
+description: Ultron Python SDK reference
 ---
 
 # Python SDK
 
-Use Ultron directly from Python without running the HTTP server.
+Ultron ships a Python SDK so you can use it directly from code without running the HTTP server.
 
 ## Install
 
@@ -19,8 +19,10 @@ pip install -e .
 ```python
 from ultron import Ultron
 
+# Default configuration
 ultron = Ultron()
 
+# Or custom configuration
 from ultron import UltronConfig
 
 config = UltronConfig(
@@ -35,7 +37,7 @@ ultron = Ultron(config=config)
 
 ---
 
-## Memory
+## Memory management
 
 ### upload_memory
 
@@ -61,12 +63,12 @@ record = ultron.upload_memory(
 
 ### search_memories
 
-Semantic search across memory types.
+Semantic search over memories.
 
 ```python
 results = ultron.search_memories(
     query: str,
-    tier: str = None,       # None=all, or "hot"/"warm"/"cold"/"all"
+    tier: str = None,       # None = all tiers, or "hot"/"warm"/"cold"/"all"
     limit: int = None,      # None -> UltronConfig.memory_search_default_limit (ULTRON_MEMORY_SEARCH_LIMIT)
     detail_level: str = "l0",  # "l0" or "l1"
 ) -> List[MemorySearchResult]
@@ -74,7 +76,7 @@ results = ultron.search_memories(
 
 ### get_memory_details
 
-Fetch full records by id.
+Fetch full memory rows by id list.
 
 ```python
 records = ultron.get_memory_details(
@@ -83,6 +85,8 @@ records = ultron.get_memory_details(
 ```
 
 ### get_memory_stats
+
+Return memory statistics.
 
 ```python
 stats = ultron.get_memory_stats() -> dict
@@ -94,15 +98,18 @@ stats = ultron.get_memory_stats() -> dict
 
 ### ingest
 
-Routes `.jsonl` to incremental session extract; other files to LLM extract. Accepts files and directories.
+Unified ingestion: routes by file type (`.jsonl` → incremental extract, others → LLM extract). Accepts a mix of files and directories.
 
 ```python
 result = ultron.ingest(
     paths: List[str],
+    agent_id: str = "",
 ) -> dict
 ```
 
 ### ingest_text
+
+Ingest raw text.
 
 ```python
 result = ultron.ingest_text(
@@ -112,31 +119,11 @@ result = ultron.ingest_text(
 
 ---
 
-## Skill generation
-
-### generate_skill_from_memory
-
-```python
-skill = ultron.generate_skill_from_memory(
-    memory_id: str,
-) -> Optional[Skill]
-```
-
-### auto_generate_skills
-
-```python
-skills = ultron.auto_generate_skills(
-    limit: int = None,  # None -> UltronConfig.skill_auto_detect_batch_limit (ULTRON_SKILL_AUTO_DETECT_LIMIT)
-) -> List[Skill]
-```
-
----
-
 ## Tier rebalance
 
 ### run_tier_rebalance
 
-Reassigns HOT/WARM/COLD by `hit_count` percentiles, archives expired COLD, triggers skills for new HOT rows.
+Reassign HOT/WARM/COLD by `hit_count` percentiles and archive expired COLD memories.
 
 ```python
 summary = ultron.run_tier_rebalance() -> dict
@@ -154,9 +141,11 @@ summary = ultron.run_memory_decay() -> dict
 
 ## Raw uploads archive (`raw_user_uploads`)
 
-When `archive_raw_uploads` is on: `ingest(paths)` writes one row per file (`ingest_file`); **standalone** `ingest_text` / HTTP text ingest without `source_file` writes UTF-8 text (`ingest_text`); **file-backed** LLM extract does not duplicate decoded text. `upload_skill` writes each pack file (`skill_upload_file`).
+When `archive_raw_uploads` is enabled: `ingest(paths)` writes one row per ingested file (`ingest_file`); only **`ingest_text`** / HTTP plain-text ingest (no `source_file`) writes one UTF-8 row (`ingest_text`); **LLM extract after reading from file does not duplicate body text** (already covered by `ingest_file`). `upload_skill` writes one row per file in the pack (`skill_upload_file`).
 
 ### get_raw_user_upload
+
+Load an archive row by id (includes decoded fields such as `payload_text` / `payload_base64`).
 
 ```python
 upload = ultron.get_raw_user_upload(
@@ -165,6 +154,8 @@ upload = ultron.get_raw_user_upload(
 ```
 
 ### list_raw_user_uploads
+
+List archive summaries (without full payload bodies).
 
 ```python
 uploads = ultron.list_raw_user_uploads(
@@ -176,11 +167,11 @@ uploads = ultron.list_raw_user_uploads(
 
 ---
 
-## Skills
+## Skill management
 
 ### search_skills
 
-Semantic search over internal skills and ModelScope catalog entries. Each hit includes `source` (`"internal"` or `"catalog"`) and `full_name`.
+Semantic search over skills (internal skills and ModelScope Skill Hub catalog entries, merged and sorted by similarity). Each hit includes `source` (`"internal"` or `"catalog"`) and `full_name`.
 
 ```python
 results = ultron.search_skills(
@@ -191,6 +182,8 @@ results = ultron.search_skills(
 
 ### upload_skills
 
+Batch upload: pass a list of directory paths; scans immediate subdirectories that contain `SKILL.md` and uploads each.
+
 ```python
 result = ultron.upload_skills(
     paths: List[str],
@@ -200,44 +193,104 @@ result = ultron.upload_skills(
 **Example:**
 
 ```python
-result = ultron.upload_skills(paths=["/path/to/my-skill"])
-result = ultron.upload_skills(paths=["/path/to/skills-folder"])
+# Single skill directory
+result = ultron.upload_skills(
+    paths=["/path/to/my-skill"],
+)
+
+# All skills under a folder
+result = ultron.upload_skills(
+    paths=["/path/to/skills-folder"],
+)
+# result: {"total": 3, "successful": 3, "results": [...]}
 ```
 
 ### install_skill_to
 
+Install a skill into a target directory. Resolves internal Ultron skills first; otherwise installs from ModelScope Skill Hub via `modelscope skill add`.
+
 ```python
 result = ultron.install_skill_to(
-    full_name: str,
-    target_dir: str,
+    full_name: str,    # Skill name or full path (e.g. "@ns/name"); internal skills use slug directly
+    target_dir: str,   # Destination directory (caller-defined)
 ) -> dict
 ```
 
 **Example:**
 
 ```python
+# Internal skill
 result = ultron.install_skill_to(
     full_name="ultron",
     target_dir="~/.nanobot/workspace/skills",
 )
+# result: {"success": true, "source": "internal", "installed_path": "..."}
 
+# ModelScope catalog skill
 result = ultron.install_skill_to(
     full_name="@anthropics/minimax-pdf",
     target_dir="~/.nanobot/workspace/skills",
 )
+# result: {"success": true, "source": "catalog", "installed_path": "..."}
+```
+
+### upload_skill
+
+Upload a single skill directory.
+
+```python
+skill = ultron.upload_skill(
+    skill_dir: str,
+) -> Optional[Skill]
+```
+
+### get_skill
+
+Load a skill by slug; optionally pin a version.
+
+```python
+skill = ultron.get_skill(
+    slug: str,
+    version: Optional[str] = None,
+) -> Optional[Skill]
+```
+
+### get_internal_skill_md_text
+
+Get the raw SKILL.md text for an internal skill.
+
+```python
+text = ultron.get_internal_skill_md_text(
+    slug: str,
+) -> Optional[str]
 ```
 
 ### list_all_skills
+
+List all skills.
 
 ```python
 skills = ultron.list_all_skills() -> List[dict]
 ```
 
+### Skill evolution and clusters
+
+For **server operators**: crystallization and re-crystallization run in the server `_decay_loop`; there is **no** public HTTP API. In the **same process** as `Ultron` with the same `data_dir` / database, troubleshoot or inspect via the SQLite `Database` on `ultron.db`:
+
+```python
+clusters = ultron.db.get_all_clusters()
+rows = ultron.db.get_evolution_history("my-skill-slug", limit=20)
+```
+
+To run one evolution cycle from a standalone script, build `SkillEvolutionEngine` with an `UltronConfig` that points at the same data directory and call `run_evolution_cycle()`; see `ultron.services.skill.skill_evolution`.
+
 ---
 
-## Harness Hub
+## Harness Hub (personal sync)
 
 ### list_agents
+
+List all agents for a user.
 
 ```python
 agents = ultron.list_agents(user_id: str) -> List[dict]
@@ -245,22 +298,28 @@ agents = ultron.list_agents(user_id: str) -> List[dict]
 
 ### remove_agent
 
+Remove an agent (cascade-deletes profile and shares).
+
 ```python
 ok = ultron.remove_agent(user_id: str, agent_id: str) -> bool
 ```
 
 ### harness_sync_up
 
+Upload a workspace bundle to the server.
+
 ```python
 profile = ultron.harness_sync_up(
     user_id: str,
     agent_id: str,
     product: str,
-    resources: dict,
+    resources: dict,        # {relative path: file content}
 ) -> dict
 ```
 
 ### harness_sync_down
+
+Download a workspace bundle.
 
 ```python
 profile = ultron.harness_sync_down(
@@ -271,6 +330,8 @@ profile = ultron.harness_sync_down(
 
 ### get_harness_profile
 
+Get the profile for a (user, agent) pair.
+
 ```python
 profile = ultron.get_harness_profile(
     user_id: str,
@@ -278,33 +339,37 @@ profile = ultron.get_harness_profile(
 ) -> Optional[dict]
 ```
 
+### get_profiles_by_user
+
+List all workspace profiles for that user.
+
+```python
+profiles = ultron.get_profiles_by_user(user_id: str) -> list
+```
+
 ### create_harness_share
+
+Create a share token from the current profile (raises if no profile; call `harness_sync_up` first). If a share already exists for the same agent, the token is reused and the snapshot is refreshed.
 
 ```python
 share = ultron.create_harness_share(
     user_id: str,
     agent_id: str,
-    visibility: str = "link",
-) -> dict
-```
-
-### import_harness_share
-
-```python
-profile = ultron.import_harness_share(
-    token: str,
-    target_user_id: str,
-    target_agent_id: str,
+    visibility: str = "public",
 ) -> dict
 ```
 
 ### list_harness_shares
+
+List all shares created by the user.
 
 ```python
 shares = ultron.list_harness_shares(user_id: str) -> List[dict]
 ```
 
 ### delete_harness_share
+
+Delete a share token.
 
 ```python
 ok = ultron.delete_harness_share(token: str) -> bool
@@ -316,6 +381,8 @@ ok = ultron.delete_harness_share(token: str) -> bool
 
 ### get_stats
 
+Aggregates skill storage, category stats, embedding model info, and memory stats (same shape as HTTP `GET /stats`).
+
 ```python
 stats = ultron.get_stats() -> dict
 ```
@@ -326,7 +393,7 @@ stats = ultron.get_stats() -> dict
 
 ### reset_all
 
-Wipes the database and skill files.
+Reset all data (clear database, delete skill files).
 
 ```python
 result = ultron.reset_all() -> dict
@@ -393,25 +460,38 @@ class RetrievalResult:
 
 ## Public exports
 
+The SDK re-exports:
+
 ```python
 from ultron import (
+    # Main entry
     Ultron,
+
+    # Configuration
     UltronConfig,
     default_config,
+    load_ultron_dotenv,
+
+    # Models — skills
     Skill,
     SkillMeta,
     SkillFrontmatter,
     SkillUsageRecord,
-    SkillStatus,
     SourceType,
     Complexity,
+
+    # Models — memory
     MemoryRecord,
     MemoryTier,
     MemoryType,
     MemoryStatus,
+
+    # Retrieval
     RetrievalQuery,
     RetrievalResult,
     MemorySearchResult,
+
+    # Services
     IntentAnalyzer,
     ConversationExtractor,
     LLMService,

@@ -227,15 +227,6 @@ class _MemoryMixin:
             )
             return cursor.rowcount > 0
 
-    def update_memory_generated_skill(self, memory_id: str, skill_slug: str) -> bool:
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE memory_records SET generated_skill_slug = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (skill_slug, memory_id)
-            )
-            return cursor.rowcount > 0
-
     def get_warm_overflow_candidates(self, max_warm: int) -> List[dict]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -348,18 +339,6 @@ class _MemoryMixin:
                 "by_type": type_counts,
                 "by_status": status_counts,
             }
-
-    def get_promotion_candidates(self) -> List[dict]:
-        """HOT memories without an existing skill, for skill generation."""
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM memory_records
-                WHERE tier = 'hot'
-                  AND generated_skill_slug IS NULL
-                ORDER BY hit_count DESC
-            """)
-            return [self._row_to_memory_dict(row) for row in cursor.fetchall()]
 
     def _row_to_memory_dict(self, row: sqlite3.Row) -> dict:
         tags = []

@@ -62,7 +62,7 @@ Memory to classify:
 
 
 class LLMOrchestrator:
-    """LLM-driven business operations: memory extraction, merging, classification, skill generation."""
+    """LLM-driven business operations: memory extraction, merging, classification, skill evolution."""
 
     def __init__(
         self, llm_service: LLMService, classify_llm_service: Optional[LLMService] = None
@@ -300,91 +300,6 @@ New memory:
                 res, max_field_tokens, self.llm._count_tokens
             )
         return {"content": c, "context": ctx, "resolution": res}
-
-    def generate_skill_content(
-        self,
-        primary_content: str,
-        primary_context: str,
-        primary_resolution: str,
-        related_memories: Optional[List[dict]] = None,
-        contributions: Optional[List[dict]] = None,
-    ) -> Optional[dict]:
-        """
-        Synthesize a reusable skill document from memories using LLM.
-
-        Returns {"name": "...", "description": "...", "content": "..."} or None.
-        """
-        _fixed_overhead = (
-            "You are a knowledge engineer. Synthesize the following memories "
-            "into a reusable skill document.\n\nRequirements:\n...\n"
-            "Return strictly in JSON:\n```json\n{...}\n```\n\n"
-            "Memories to synthesize:\nPrimary memory:\n- Content: \n- Context: \n- Resolution: "
-        )
-        primary_budget = max(self.llm.user_text_token_budget(_fixed_overhead) // 2, 128)
-        per_primary = max(primary_budget // 3, 64)
-
-        p_content = truncate_text_to_token_limit(
-            primary_content, per_primary * 2, self.llm._count_tokens
-        )
-        p_context = truncate_text_to_token_limit(
-            primary_context, per_primary, self.llm._count_tokens
-        )
-        p_resolution = truncate_text_to_token_limit(
-            primary_resolution, per_primary, self.llm._count_tokens
-        )
-
-        parts = [f"Primary memory:\n- Content: {p_content}"]
-        if p_context:
-            parts.append(f"- Context: {p_context}")
-        if p_resolution:
-            parts.append(f"- Resolution: {p_resolution}")
-        if contributions:
-            parts.append(f"\nAlternative solutions from {len(contributions)} agents:")
-            for i, c in enumerate(contributions[:5], 1):
-                r = truncate_text_to_token_limit(
-                    c.get("resolution") or "", 100, self.llm._count_tokens
-                )
-                if r:
-                    parts.append(f"  {i}. {r}")
-        if related_memories:
-            parts.append(f"\nRelated experiences ({len(related_memories)}):")
-            for i, m in enumerate(related_memories[:5], 1):
-                snippet = truncate_text_to_token_limit(
-                    m.get("content") or "", 100, self.llm._count_tokens
-                )
-                parts.append(f"  {i}. {snippet}")
-
-        prompt = f"""You are a knowledge engineer. Synthesize the following memories into a reusable skill document.
-
-Requirements:
-1. Abstract the pattern — extract the general rule, not just the specific instance.
-2. Write a clear problem description, trigger conditions, and step-by-step solution.
-3. If multiple solutions exist, rank them by reliability.
-4. Keep it concise and actionable — an agent should be able to follow this immediately.
-
-Return strictly in JSON:
-```json
-{{
-  "name": "short-kebab-case-name",
-  "description": "One sentence describing what this skill solves",
-  "content": "Full markdown skill document with ## sections"
-}}
-```
-
-Memories to synthesize:
-{chr(10).join(parts)}"""
-
-        response = self.llm.call(self.llm.dashscope_user_messages(prompt))
-        if not response:
-            return None
-        result = self.llm.parse_json_response(response, expect_array=False)
-        if not isinstance(result, dict) or not result.get("content"):
-            return None
-        return {
-            "name": result.get("name", ""),
-            "description": result.get("description", ""),
-            "content": result.get("content", ""),
-        }
 
     def classify_memory_type(
         self,

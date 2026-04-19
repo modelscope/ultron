@@ -41,7 +41,7 @@ class MemoryService:
     Shared memory management service for multi-agent collective learning.
 
     Handles upload (with dedup/merge), semantic search, percentile-based tier
-    rebalancing, and event-driven skill generation.
+    rebalancing, and cluster assignment for skill evolution.
 
     Tiers: HOT (top N%) / WARM (next M%) / COLD (rest) — redistributed
     periodically by hit_count ranking via run_tier_rebalance().
@@ -70,7 +70,6 @@ class MemoryService:
         config: Optional[UltronConfig] = None,
         llm_service=None,
         llm_orchestrator=None,
-        skill_generator=None,
     ):
         self.db = database
         self.embedding = embedding_service
@@ -78,7 +77,6 @@ class MemoryService:
         self.config = config or default_config
         self.llm_service = llm_service
         self.llm_orchestrator = llm_orchestrator
-        self.skill_generator = skill_generator
         self.intent_analyzer = IntentAnalyzer(llm_service=llm_service)
         self._merge_count_tokens = get_token_counter(
             self.config.llm_token_count_encoding
@@ -447,10 +445,6 @@ class MemoryService:
 
         changed = self.db.batch_update_tiers(updates)
 
-        # Trigger skill generation for memories newly entering HOT
-        for mid in newly_hot:
-            self._try_auto_generate_skill(mid)
-
         # COLD TTL → archive (excluded from search and future rebalance)
         cold_archived = 0
         if self.config.cold_ttl_days > 0:
@@ -475,10 +469,6 @@ class MemoryService:
                 detail=json.dumps(summary, ensure_ascii=False),
             )
         return summary
-
-    def get_promotion_candidates(self) -> List[MemoryRecord]:
-        """HOT memories eligible to be distilled into a skill."""
-        return [MemoryRecord.from_dict(c) for c in self.db.get_promotion_candidates()]
 
     def get_memory_stats(self) -> dict:
         """Aggregate counts: total memories and breakdown by tier, type, and status."""
@@ -1018,15 +1008,6 @@ class MemoryService:
                 return 0.0
         days = max((datetime.now() - last_hit_at).total_seconds() / 86400.0, 0)
         return math.exp(-self.config.decay_alpha * days)
-
-    def _try_auto_generate_skill(self, memory_id: str) -> None:
-        """Attempt skill generation for a memory newly entering HOT. Failures are silent."""
-        if not self.skill_generator:
-            return
-        try:
-            self.skill_generator.generate_skill_from_memory(memory_id)
-        except Exception:
-            pass
 
     def _try_assign_to_cluster(self, record: MemoryRecord) -> None:
         """Assign a newly uploaded memory to a knowledge cluster. Failures are silent."""

@@ -32,8 +32,6 @@ class SmartIngestionService:
     When ``archive_raw_uploads`` is enabled, each file payload is stored in
     ``raw_user_uploads`` before processing (same size cap as ingestion reads).
 
-    Skill generation is handled internally by MemoryService when a memory
-    reaches confirmed status.
     """
 
     def __init__(

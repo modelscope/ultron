@@ -5,21 +5,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-def _skip_dotenv() -> bool:
-    v = os.environ.get("ULTRON_SKIP_DOTENV", "").strip().lower()
-    return v in ("1", "true", "yes", "on")
-
-
 def load_ultron_dotenv() -> None:
     """
     Merge ``KEY=value`` pairs from ``~/.ultron/.env`` into ``os.environ`` before building ``UltronConfig``.
 
     Uses ``override=False`` so variables already set in the process (e.g. exported in the shell) are not replaced.
 
-    Set ``ULTRON_SKIP_DOTENV=1`` to disable. If ``python-dotenv`` is not installed, this is a no-op.
+    If ``python-dotenv`` is not installed, this is a no-op.
     """
-    if _skip_dotenv():
-        return
     try:
         from dotenv import load_dotenv
     except ImportError:
@@ -173,14 +166,6 @@ class UltronConfig:
             int(os.environ.get("ULTRON_SKILL_SEARCH_LIMIT", "5")),
         )
     )
-    # HOT promotion batch size for ``SkillGeneratorService.auto_detect_and_generate``
-    skill_auto_detect_batch_limit: int = field(
-        default_factory=lambda: max(
-            1,
-            int(os.environ.get("ULTRON_SKILL_AUTO_DETECT_LIMIT", "5")),
-        )
-    )
-
     # Optional async embedding worker pool
     async_embedding: bool = field(
         default_factory=lambda: _env_bool("ULTRON_ASYNC_EMBEDDING", False),
@@ -311,25 +296,25 @@ class UltronConfig:
     cluster_similarity_threshold: float = field(
         default_factory=lambda: max(
             0.0,
-            min(1.0, float(os.environ.get("ULTRON_CLUSTER_SIMILARITY_THRESHOLD", "0.6"))),
+            min(1.0, float(os.environ.get("ULTRON_CLUSTER_SIMILARITY_THRESHOLD", "0.75"))),
         )
     )
     crystallization_threshold: int = field(
         default_factory=lambda: max(
             2,
-            int(os.environ.get("ULTRON_CRYSTALLIZATION_THRESHOLD", "3")),
+            int(os.environ.get("ULTRON_CRYSTALLIZATION_THRESHOLD", "5")),
         )
     )
     recrystallization_delta: int = field(
         default_factory=lambda: max(
             1,
-            int(os.environ.get("ULTRON_RECRYSTALLIZATION_DELTA", "2")),
+            int(os.environ.get("ULTRON_RECRYSTALLIZATION_DELTA", "3")),
         )
     )
     evolution_batch_limit: int = field(
         default_factory=lambda: max(
             1,
-            int(os.environ.get("ULTRON_EVOLUTION_BATCH_LIMIT", "3")),
+            int(os.environ.get("ULTRON_EVOLUTION_BATCH_LIMIT", "10")),
         )
     )
 

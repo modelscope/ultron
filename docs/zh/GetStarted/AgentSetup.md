@@ -1,8 +1,8 @@
 ---
-
-## slug: AgentSetup
+slug: AgentSetup
 title: 助手接入
 description: 让 AI 助手连接 Ultron
+---
 
 # 助手接入
 

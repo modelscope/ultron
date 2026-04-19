@@ -5,12 +5,10 @@ from .skill_retriever import (
     RetrievalResult,
 )
 from .skill_catalog import SkillCatalogService
-from .skill_generator import SkillGeneratorService
 
 __all__ = [
     "SkillRetriever",
     "RetrievalQuery",
     "RetrievalResult",
     "SkillCatalogService",
-    "SkillGeneratorService",
 ]

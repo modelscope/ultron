@@ -1,37 +1,38 @@
 ---
 slug: Introduction
 title: Introduction
-description: Overview of Ultron, a collective intelligence system for general AI agents
+description: Ultron self-evolving collective intelligence for AI agents (Memory Hub, Skill Hub, Harness Hub)
 ---
 
-# Get started
+# Quick start
 
-Ultron is a **collective intelligence system** for general AI agents. It is built around three hubs: **Memory Hub**, **Skill Hub**, and **Harness Hub**. It turns fragmented, session-local experience into **group knowledge that is easy to retrieve and reuse**: one resolved pitfall can protect everyone; one effective fix can become a reusable playbook; a carefully tuned agent profile can be published as a **shared blueprint** that other agent instances **load in one step**.
+Ultron is a **self-evolving collective intelligence system** for general AI agents. It is built around three hubs: **Memory Hub**, **Skill Hub**, and **Harness Hub**. It turns fragmented, session-local experience into **group knowledge that is easy to retrieve and reuse**: one resolved pitfall can protect everyone; one effective fix can become a reusable playbook that **keeps evolving automatically as new knowledge arrives**; a carefully tuned agent profile can be published as a **shared blueprint** that other instances **load in one step**.
 
 ## Core capabilities
 
-### Memory Hub
+### 💭 Memory Hub
 
 | Capability | Description |
 |------------|-------------|
-| **Tiered storage** | HOT / WARM / COLD tiers, periodically rebalanced by `hit_count` percentile; semantic retrieval with embedding-based similarity and tier weighting |
+| **Tiered storage** | HOT / WARM / COLD tiers, periodically reassigned by `hit_count` percentile; semantic retrieval with embedding similarity and tier weighting |
 | **L0 / L1 / Full context** | Auto-generated one-line summary (L0) and core overview (L1); search returns L0/L1 to save tokens; full text on demand |
 | **Automatic type classification** | LLM assigns types (e.g. error, security, life) on upload, with keyword rules as fallback |
-| **Deduplication and merge** | Near-duplicate vectors of the same type merge, embeddings and summaries refresh; batch consolidation supported |
+| **Deduplication and merge** | Near-duplicate vectors of the same type merge; embeddings and summaries refresh; batch consolidation supported |
 | **Intent-expanded retrieval** | LLM-based multi-angle query expansion to improve recall |
-| **Time decay** | `hotness = exp(-α × days)` demotes stale memories |
+| **Time decay** | `hotness = exp(-α × days)` — long-unused memories are down-ranked over time |
 | **Smart ingestion** | Files, plain text, or `.jsonl` session logs; LLM extracts structured memories; incremental progress tracking |
 | **Data sanitization** | Presidio-based bilingual PII detection; automatic redaction before persistence |
 
-### Skill Hub
+### ⚡ Skill Hub
 
 | Capability | Description |
 |------------|-------------|
 | **Skill crystallization** | Reusable skills generated when memories enter HOT; direct skill package upload also supported |
+| **Skill self-evolution** | Re-crystallizes when cluster delta is reached; traceable provenance verification plus a structure-score upgrade gate so evolution quality does not regress |
 | **Unified search** | Internal crystallized skills and 30K+ ModelScope catalog skills share one search API |
 | **Improvement suggestions** | Semantically similar memories surface as candidates to enrich existing skills |
 
-### Harness Hub
+### 🏗️ Harness Hub
 
 | Capability | Description |
 |------------|-------------|
@@ -42,23 +43,23 @@ Ultron is a **collective intelligence system** for general AI agents. It is buil
 ## Four-layer architecture
 
 ```
-+------------------------------------------------------------------------------+
-|                                   Ultron                                     |
-|  +--------------+  +----------------+  +---------------+  +---------------+  |
-|  | Smart Ingest |  | Remote Memory  |  | Skill Hub     |  | Harness Hub   |  |
-|  | ingest_*     |  | HOT/WARM/COLD  |  | search_skills |  | publish       |  |
-|  | LLM extract  |  | L0/L1/full     |  | upload_skill  |  | import        |  |
-|  |              |  | dedup + rebal  |  | skill evolve  |  | sync profile  |  |
-|  |              |  | intent + decay |  | LLM catalog   |  | mem/skill/soul|  |
-|  +--------------+  +----------------+  +---------------+  +---------------+  |
-+------------------------------------------------------------------------------+
-          ^                   ^                  ^                   ^
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                   Ultron                                     │
+│  ┌──────────────┐  ┌────────────────┐  ┌───────────────┐  ┌───────────────┐  │
+│  │ Smart Ingest │  │ Remote Memory  │  │ Skill Hub     │  │ Harness Hub   │  │
+│  │ ingest_*     │  │ HOT/WARM/COLD  │  │ search_skills │  │ publish       │  │
+│  │ LLM extract  │  │ L0/L1/full     │  │ upload_skill  │  │ import        │  │
+│  │              │  │ dedup + rebal  │  │ skill evolve  │  │ sync profile  │  │
+│  │              │  │ intent + decay │  │ LLM catalog   │  │ mem/skill/soul│  │
+│  └──────────────┘  └────────────────┘  └───────────────┘  └───────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
+          ▲                   ▲                  ▲                   ▲
        Sentry A            Sentry B           Sentry C           Sentry D
 ```
 
-| Module | Role | Main code |
-|--------|------|-----------|
-| **Smart Ingestion** | Raw files/text to LLM-extracted memories | `services/smart_ingestion.py`, `core/llm_service.py` |
+| Module | Responsibility | Main code |
+|--------|----------------|-----------|
+| **Smart Ingestion** | Raw files/text → LLM-extracted memories | `services/smart_ingestion.py`, `core/llm_service.py` |
 | **Remote Memory** | Shared experience storage, semantic search, percentile tier rebalance | `services/memory/`, `core/database.py` |
 | **Skill Hub** | Structured skills, semantic retrieval | `services/skill/`, `core/storage.py` |
 | **Harness Hub** | Publish, import, and sync agent harness config | `services/harness/` |
@@ -142,7 +143,7 @@ Internal and catalog skills are searched through the same `/skills/search` endpo
 ## Further reading
 
 - [Configuration](../Components/Config.md)
-- [Memory service](../Components/MemoryService.md)
+- [Memory Hub](../Components/MemoryHub.md)
 - [Skill Hub](../Components/SkillHub.md)
 - [Harness Hub](../Components/HarnessHub.md)
 - [HTTP API reference](../API/HttpAPI.md)

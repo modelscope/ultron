@@ -4,7 +4,6 @@ from .skill import (
     RetrievalQuery,
     RetrievalResult,
     SkillCatalogService,
-    SkillGeneratorService,
 )
 from .memory import MemoryService, MemorySearchResult
 from ..utils.llm_orchestrator import LLMOrchestrator
@@ -16,6 +15,5 @@ __all__ = [
     "SkillCatalogService",
     "MemoryService",
     "MemorySearchResult",
-    "SkillGeneratorService",
     "LLMOrchestrator",
 ]

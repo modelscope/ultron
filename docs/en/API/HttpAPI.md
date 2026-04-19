@@ -1,12 +1,12 @@
 ---
 slug: HttpAPI
 title: HTTP API
-description: Ultron REST API reference
+description: Ultron HTTP API reference
 ---
 
 # HTTP API
 
-Ultron exposes a REST API on FastAPI, default base `http://0.0.0.0:9999`.
+Ultron exposes a RESTful HTTP API on FastAPI, default base `http://0.0.0.0:9999`.
 
 ## Run the server
 
@@ -14,19 +14,25 @@ Ultron exposes a REST API on FastAPI, default base `http://0.0.0.0:9999`.
 uvicorn ultron.server:app --host 0.0.0.0 --port 9999
 ```
 
-## General
+## General notes
 
 - **Responses**: JSON
-- **Background**: Memory decay runs on `decay_interval_hours`; if `async_embedding=true`, an embedding worker shares the same `Ultron` instance as HTTP
+- **Background jobs**: After startup the process runs memory decay on `decay_interval_hours` (tier rebalance and related work); if `async_embedding=true`, an embedding queue worker shares the same `Ultron` instance as HTTP
 
 ---
 
 ## System
 
-### Health
+### Health check
 
 ```
 GET /
+```
+
+Redirects to `/dashboard` (HTTP 302).
+
+```
+GET /health
 ```
 
 **Response:**
@@ -40,7 +46,7 @@ GET /
 }
 ```
 
-### Stats
+### System stats
 
 ```
 GET /stats
@@ -87,9 +93,9 @@ Aggregates **skill storage**, **skill categories**, **embedding service**, and *
 
 ---
 
-## Memory (remote memory)
+## Memory (Remote Memory)
 
-### Upload
+### Upload memory
 
 ```
 POST /memory/upload
@@ -119,7 +125,7 @@ POST /memory/upload
 }
 ```
 
-### Search
+### Search memories
 
 ```
 POST /memory/search
@@ -129,10 +135,10 @@ POST /memory/search
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `query` | string | yes | Natural language |
-| `tier` | string | no | `hot` / `warm` / `cold` / `all`; omit or `null` = all |
-| `limit` | int | no | Max rows; omit → `ULTRON_MEMORY_SEARCH_LIMIT` (default **10**) |
-| `detail_level` | string | no | **`l0`** or **`l1`** (default `l0`). Truncates or clears body fields; `l0` is summary-first; `l1` keeps more context |
+| `query` | string | yes | Natural-language query |
+| `tier` | string | no | `hot` / `warm` / `cold` to restrict one tier; `all` for every tier; **omit or `null`** searches all tiers |
+| `limit` | int | no | Max hits; **omit** → server `ULTRON_MEMORY_SEARCH_LIMIT` (default **10**) |
+| `detail_level` | string | no | **`l0`** or **`l1`** (default `l0`). Only affects whether body-like fields are truncated or cleared: `l0` is summary-oriented (often `summary_l0`); `l1` keeps more context fields |
 
 **Response:**
 
@@ -157,7 +163,7 @@ POST /memory/search
 }
 ```
 
-### Details
+### Memory details
 
 ```
 POST /memory/details
@@ -210,7 +216,7 @@ GET /memory/stats
 
 ## Sessions and ingestion
 
-### Unified ingest
+### Unified ingestion
 
 ```
 POST /ingest
@@ -222,7 +228,7 @@ POST /ingest
 - **`success`**: `true` when `data.successful > 0`
 - **`data`**: Raw smart-ingestion result (paths processed, counts, etc.; exact keys depend on runtime)
 
-### Text ingest
+### Text ingestion
 
 ```
 POST /ingest/text
@@ -326,13 +332,13 @@ Directory rules: if the path contains `SKILL.md` at top level, it is one skill; 
 
 **`success`**: `true` when `successful > 0`.
 
-### Install skill
+### Install skill to directory
 
 ```
 POST /skills/install
 ```
 
-Installs into a target directory. Resolves internal slug first; otherwise `modelscope skill add` for catalog skills.
+Installs into a target directory. Resolves internal slug first; otherwise `modelscope skill add` from ModelScope Skill Hub for catalog skills.
 
 **Body:**
 
@@ -368,8 +374,12 @@ Installs into a target directory. Resolves internal slug first; otherwise `model
 ### List agents
 
 ```
-GET /harness/agents?user_id=u1
+GET /harness/agents
 ```
+
+Requires `Authorization: Bearer <token>`.
+
+**Response:**
 
 ```json
 {
@@ -385,26 +395,28 @@ GET /harness/agents?user_id=u1
 DELETE /harness/agents
 ```
 
+Requires `Authorization: Bearer <token>`.
+
 **Body:**
 
 | Field | Type | Required |
 |-------|------|----------|
-| `user_id` | string | yes |
 | `agent_id` | string | yes |
 
 Deletes the agent’s profile and share tokens.
 
-### Sync up
+### Sync up (upload workspace)
 
 ```
 POST /harness/sync/up
 ```
 
+Requires `Authorization: Bearer <token>`.
+
 **Body:**
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `user_id` | string | yes | User id |
 | `agent_id` | string | yes | Device id |
 | `product` | string | no | Claw product (default `nanobot`) |
 | `resources` | object | yes | Map of relative path → file text |
@@ -425,17 +437,18 @@ POST /harness/sync/up
 }
 ```
 
-### Sync down
+### Sync down (download workspace)
 
 ```
 POST /harness/sync/down
 ```
 
+Requires `Authorization: Bearer <token>`.
+
 **Body:**
 
 | Field | Type | Required |
 |-------|------|----------|
-| `user_id` | string | yes |
 | `agent_id` | string | yes |
 
 404 if no profile exists.
@@ -443,8 +456,18 @@ POST /harness/sync/down
 ### Get profile
 
 ```
-GET /harness/profile?user_id=u1&agent_id=d1
+GET /harness/profile?agent_id=d1
 ```
+
+Requires `Authorization: Bearer <token>`.
+
+### Get all profiles
+
+```
+GET /harness/profiles
+```
+
+Requires `Authorization: Bearer <token>`. Returns all profiles for the authenticated user.
 
 ### Create share
 
@@ -452,12 +475,13 @@ GET /harness/profile?user_id=u1&agent_id=d1
 POST /harness/share
 ```
 
+Requires `Authorization: Bearer <token>`.
+
 **Body:**
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `user_id` | string | yes | Owner user |
-| `agent_id` | string | yes | Owner device |
+| `agent_id` | string | yes | Device id |
 | `visibility` | string | no | `link` / `public` / `private` (default `link`) |
 
 **Response:**
@@ -476,27 +500,13 @@ POST /harness/share
 }
 ```
 
-### Import share
-
-```
-POST /harness/share/import
-```
-
-**Body:**
-
-| Field | Type | Required |
-|-------|------|----------|
-| `token` | string | yes |
-| `target_user_id` | string | yes |
-| `target_agent_id` | string | yes |
-
-Imports the snapshot as the target user’s profile.
-
 ### List shares
 
 ```
-GET /harness/shares?user_id=u1
+GET /harness/shares
 ```
+
+Requires `Authorization: Bearer <token>`.
 
 ### Delete share
 
@@ -504,34 +514,315 @@ GET /harness/shares?user_id=u1
 DELETE /harness/share
 ```
 
+Requires `Authorization: Bearer <token>`.
+
 **Body:**
 
 | Field | Type | Required |
 |-------|------|----------|
 | `token` | string | yes |
 
+### Export share
+
+```
+GET /harness/share/export/{token}
+```
+
+Returns a bash install script for the shared agent configuration.
+
+| Parameter | In | Type | Required | Description |
+|-----------|-----|------|----------|-------------|
+| `token` | path | string | yes | Share token |
+| `product` | query | string | no | Target product (default `nanobot`) |
+
+### Short code import
+
+```
+GET /i/{code}
+```
+
+Short-code alias for share export. Returns a bash install script.
+
+| Parameter | In | Type | Required | Description |
+|-----------|-----|------|----------|-------------|
+| `code` | path | string | yes | 6-char short code |
+| `product` | query | string | no | Target product (default `nanobot`) |
+
+### Product defaults
+
+```
+GET /harness/defaults/{product}
+```
+
+Returns default workspace files for a product (`nanobot`, `openclaw`, `hermes`).
+
+**Response:**
+
+```json
+{
+    "success": true,
+    "product": "nanobot",
+    "files": {"SOUL.md": "...", "AGENTS.md": "..."}
+}
+```
+
+---
+
+## Authentication
+
+### Register
+
+```
+POST /auth/register
+```
+
+**Body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `username` | string | yes |
+| `password` | string | yes |
+
+**Response:**
+
+```json
+{
+    "success": true,
+    "data": {
+        "username": "alice",
+        "token": "eyJ..."
+    }
+}
+```
+
+### Login
+
+```
+POST /auth/login
+```
+
+**Body:**
+
+| Field | Type | Required |
+|-------|------|----------|
+| `username` | string | yes |
+| `password` | string | yes |
+
+**Response:**
+
+```json
+{
+    "success": true,
+    "data": {
+        "username": "alice",
+        "token": "eyJ..."
+    }
+}
+```
+
+### Current user
+
+```
+GET /auth/me
+```
+
+Requires `Authorization: Bearer <token>`.
+
+**Response:**
+
+```json
+{
+    "success": true,
+    "data": {
+        "username": "alice",
+        "created_at": "2026-04-06T12:00:00"
+    }
+}
+```
+
+---
+
+## Soul Presets (role presets)
+
+### List presets
+
+```
+GET /harness/soul-presets
+```
+
+Returns all presets grouped by category.
+
+**Response:**
+
+```json
+{
+    "success": true,
+    "data": {
+        "categories": [
+            {
+                "category": "creative",
+                "presets": [{"id": "poet", "name": "Poet", "emoji": "✍️", "description": "..."}]
+            }
+        ]
+    }
+}
+```
+
+### Get preset
+
+```
+GET /harness/soul-presets/{preset_id}
+```
+
+Returns full preset details including body content.
+
+### Build role resources
+
+```
+POST /harness/soul-presets/build
+```
+
+Builds merged workspace resources from selected presets. The body is split into `SOUL.md`, `AGENTS.md`, and `IDENTITY.md`.
+
+**Body:**
+
+```json
+{
+    "preset_ids": ["poet", "mentor"]
+}
+```
+
+**Response:**
+
+```json
+{
+    "success": true,
+    "data": {
+        "resources": {
+            "SOUL.md": "...",
+            "AGENTS.md": "...",
+            "IDENTITY.md": "..."
+        }
+    }
+}
+```
+
+---
+
+## Showcase (examples)
+
+### List showcases
+
+```
+GET /harness/showcase?lang=en
+```
+
+| Parameter | In | Type | Required | Description |
+|-----------|-----|------|----------|-------------|
+| `lang` | query | string | no | `zh` or `en` (default `zh`) |
+
+### Get showcase
+
+```
+GET /harness/showcase/{slug}?lang=en
+```
+
+Returns full showcase entry by slug.
+
+---
+
+## Dashboard (control panel)
+
+### Dashboard UI
+
+```
+GET /dashboard
+```
+
+Returns the dashboard HTML page. SPA routes (`/skills`, `/leaderboard`, `/quickstart`, `/harness`) also serve the same HTML.
+
+### Overview
+
+```
+GET /dashboard/overview
+```
+
+```json
+{
+    "memory": {...},
+    "skills": {...}
+}
+```
+
+### List memories
+
+```
+GET /dashboard/memories?q=docker&memory_type=error&tier=hot&sort=recent&page=1&page_size=20
+```
+
+All query parameters are optional. Returns paginated memory list.
+
+### List skills
+
+```
+GET /dashboard/skills?q=python&source=internal&category=ai&page=1&page_size=20
+```
+
+All query parameters are optional. Returns paginated skill list.
+
+### Skill markdown
+
+```
+GET /dashboard/skills/internal/{slug}/skill-md
+```
+
+Returns the raw SKILL.md content for an internal skill.
+
+```json
+{
+    "slug": "my-skill",
+    "content": "# My Skill\n..."
+}
+```
+
+### Leaderboard
+
+```
+GET /dashboard/leaderboard?limit=20
+```
+
+Returns skill usage leaderboard data.
+
+### Agent skill package
+
+```
+GET /dashboard/agent-skill-package
+```
+
+Returns a ZIP file containing all skills for agent deployment.
+
 ---
 
 ## HTTP status codes
 
-| Code | Meaning |
-|------|---------|
+| HTTP status | Description |
+|-------------|-------------|
 | 200 | Success |
-| 400 | Bad request |
-| 403 | Forbidden |
-| 404 | Not found (e.g. skill missing) |
-| 422 | Validation error (FastAPI) |
-| 500 | Server error |
+| 400 | Bad request parameters |
+| 403 | Insufficient permission |
+| 404 | Resource not found (e.g. skill missing) |
+| 422 | Request body validation failed (FastAPI) |
+| 500 | Internal server error |
 
 ---
 
-## Tracing
+## Request tracing
 
-Each request gets a `trace_id`:
+Each request is assigned a unique `trace_id`:
 
 - Response header: `X-Trace-Id: a1b2c3d4e5f6`
-- Correlate logs with this id
+- Use this id to follow the full request path in logs
 
 ## CORS
 
-Default `allow_origins=["*"]`. Lock this down in production.
+By default all origins are allowed (`allow_origins=["*"]`). In production, restrict to specific domains.

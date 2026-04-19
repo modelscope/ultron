@@ -61,6 +61,11 @@ server_state.evolution_engine = SkillEvolutionEngine(
 
 
 async def _decay_loop():
+    """Periodic job: tier rebalance (HOT/WARM/COLD) then skill evolution on the same tick.
+
+    Schedule is ``decay_interval_hours`` only; there is no separate timer for evolution.
+    Consolidation runs after both when enabled.
+    """
     u = server_state.ultron
     assert u is not None
     interval = u.config.decay_interval_hours * 3600
@@ -71,14 +76,7 @@ async def _decay_loop():
             _logger.info("Background tier rebalance completed: %s", summary)
         except Exception:
             _logger.exception("Background tier rebalance failed")
-        if u.config.consolidate_enabled:
-            try:
-                result = u.memory_service.consolidate_memories()
-                if result["merges"] > 0:
-                    _logger.info("Background consolidation completed: %s", result)
-            except Exception:
-                _logger.exception("Background consolidation failed")
-        # Skill evolution cycle
+
         if u.config.evolution_enabled and server_state.evolution_engine:
             try:
                 evo_result = server_state.evolution_engine.run_evolution_cycle()
@@ -86,6 +84,14 @@ async def _decay_loop():
                     _logger.info("Background evolution completed: %s", evo_result)
             except Exception:
                 _logger.exception("Background evolution cycle failed")
+
+        if u.config.consolidate_enabled:
+            try:
+                result = u.memory_service.consolidate_memories()
+                if result["merges"] > 0:
+                    _logger.info("Background consolidation completed: %s", result)
+            except Exception:
+                _logger.exception("Background consolidation failed")
 
 
 @asynccontextmanager

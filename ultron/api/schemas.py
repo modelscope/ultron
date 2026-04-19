@@ -100,15 +100,3 @@ class DeleteShareRequest(BaseModel):
 
 class DeleteAgentRequest(BaseModel):
     agent_id: str = Field(..., description="Agent/terminal identifier")
-
-
-class EvolveSkillRequest(BaseModel):
-    cluster_id: Optional[str] = Field(None, description="Specific cluster to evolve (omit for auto)")
-    limit: Optional[int] = Field(None, description="Max skills to evolve in this run")
-
-
-class SkillFeedbackRequest(BaseModel):
-    skill_slug: str = Field(..., description="Skill slug")
-    agent_id: str = Field("", description="Reporting agent")
-    success: bool = Field(..., description="Whether the skill was used successfully")
-    feedback: str = Field("", description="Optional feedback text")

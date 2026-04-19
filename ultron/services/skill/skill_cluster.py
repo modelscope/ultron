@@ -30,15 +30,15 @@ class KnowledgeClusterService:
 
     @property
     def similarity_threshold(self) -> float:
-        return getattr(self.config, "cluster_similarity_threshold", 0.6)
+        return getattr(self.config, "cluster_similarity_threshold", 0.75)
 
     @property
     def crystallization_threshold(self) -> int:
-        return getattr(self.config, "crystallization_threshold", 3)
+        return getattr(self.config, "crystallization_threshold", 5)
 
     @property
     def recrystallization_delta(self) -> int:
-        return getattr(self.config, "recrystallization_delta", 2)
+        return getattr(self.config, "recrystallization_delta", 3)
 
     def assign_memory_to_cluster(self, memory: MemoryRecord) -> Optional[str]:
         """Assign a memory to the best matching cluster, or create a new one.

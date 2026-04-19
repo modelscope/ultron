@@ -62,10 +62,9 @@ docs/
 │   │   └── AgentSetup.md
 │   ├── Components/
 │   │   ├── Config.md
-│   │   ├── MemoryService.md
+│   │   ├── MemoryHub.md
 │   │   ├── SkillHub.md
-│   │   ├── HarnessHub.md
-│   │   └── SmartIngestion.md
+│   │   └── HarnessHub.md
 │   ├── API/
 │   │   ├── HttpAPI.md
 │   │   └── SDK.md
@@ -79,10 +78,9 @@ docs/
     │   └── AgentSetup.md
     ├── Components/        # 核心组件
     │   ├── Config.md
-    │   ├── MemoryService.md
+    │   ├── MemoryHub.md
     │   ├── SkillHub.md
-    │   ├── HarnessHub.md
-    │   └── SmartIngestion.md
+    │   └── HarnessHub.md
     ├── API/               # 接口文档
     │   ├── HttpAPI.md
     │   └── SDK.md

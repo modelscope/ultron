@@ -13,7 +13,6 @@ from ...core.models import (
     Skill,
     SkillFrontmatter,
     SkillMeta,
-    SkillStatus,
 )
 from ...core.storage import SkillStorage
 from ...utils.skill_parser import SkillParser
@@ -27,7 +26,8 @@ class SkillEvolutionEngine:
     """
     Crystallizes skills from knowledge clusters and re-crystallizes them
     as new memories flow in. Implements quality gates, faithfulness
-    verification, and ratchet mechanism.
+    verification, and a structure-score upgrade gate (re-crystallization
+    publishes a new version only when the new score exceeds the old).
     """
 
     def __init__(
@@ -106,10 +106,6 @@ class SkillEvolutionEngine:
 
         # Update cluster
         self.db.update_cluster_skill(cluster.cluster_id, skill.meta.slug)
-
-        # Archive superseded 1:1 skills
-        for old_slug in cluster.superseded_slugs:
-            self.db.update_skill_status(old_slug, "1.0.0", SkillStatus.ARCHIVED)
 
         # Log evolution record
         self.db.save_evolution_record(
@@ -192,7 +188,7 @@ class SkillEvolutionEngine:
         new_structure_score = self._compute_structure_score(verification)
         old_structure_score = old_skill.meta.structure_score or 0.0
 
-        # Ratchet gate: new must be better
+        # Upgrade gate: new structure score must exceed the previous version
         if new_structure_score <= old_structure_score:
             self.db.save_evolution_record(
                 skill_slug=cluster.skill_slug,
@@ -204,9 +200,9 @@ class SkillEvolutionEngine:
                 status="revert",
                 trigger=trigger,
                 memory_count=len(memories),
-                mutation_summary=f"Ratchet: {new_structure_score:.2f} <= {old_structure_score:.2f}",
+                mutation_summary=f"Upgrade gate: {new_structure_score:.2f} <= {old_structure_score:.2f}",
             )
-            logger.info("Skill '%s': ratchet rejected (%.2f <= %.2f)",
+            logger.info("Skill '%s': upgrade gate rejected (%.2f <= %.2f)",
                         cluster.skill_slug, new_structure_score, old_structure_score)
             return None
 
@@ -331,9 +327,13 @@ class SkillEvolutionEngine:
         preserves = float(verification.get("preserves_existing_value", 1.0))
         return 0.35 * clarity + 0.35 * specificity + 0.30 * preserves
 
-    @staticmethod
-    def _meets_quality_bar(content: str) -> bool:
-        if len(content) < 500:
+    def _meets_quality_bar(self, content: str) -> bool:
+        # Minimum length check via token count (falls back to char estimate if no LLM)
+        if self.llm_orchestrator:
+            token_count = self.llm_orchestrator.llm._count_tokens(content)
+        else:
+            token_count = len(content) // 3
+        if token_count < 150:
             return False
         checks = 0
         # Has multiple steps (numbered or bulleted)
@@ -349,10 +349,7 @@ class SkillEvolutionEngine:
                          "异常", "失败", "回退", "边界", "注意"]
         if any(kw in content.lower() for kw in edge_keywords):
             checks += 1
-        # Sufficient length
-        if len(content) >= 800:
-            checks += 1
-        return checks >= 3
+        return checks >= 2
 
     def _build_and_save_skill(
         self,
@@ -377,7 +374,7 @@ class SkillEvolutionEngine:
             metadata = {
                 "openclaw": {"emoji": "🧬"},
                 "ultron": {
-                    "source_type": "cluster_crystallization",
+                    "source_type": "evolution",
                     "categories": categories,
                     "complexity": "medium",
                     "cluster_id": cluster.cluster_id,
@@ -397,7 +394,6 @@ class SkillEvolutionEngine:
                 version=version,
                 published_at=int(datetime.now().timestamp() * 1000),
                 parent_version=parent_version,
-                status=SkillStatus.ACTIVE,
                 cluster_id=cluster.cluster_id,
                 evolution_count=evolution_count,
                 structure_score=structure_score,

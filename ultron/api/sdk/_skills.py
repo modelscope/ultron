@@ -6,30 +6,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from ...core.models import Skill, SkillStatus
+from ...core.models import Skill
 from ...services.skill import RetrievalQuery, RetrievalResult
 
 logger = logging.getLogger(__name__)
 
 
 class SkillMixin:
-    def generate_skill_from_memory(
-        self,
-        memory_id: str,
-    ) -> Optional[Skill]:
-        """Build a skill from a memory row that reached the HOT tier."""
-        return self.skill_generator.generate_skill_from_memory(
-            memory_id=memory_id,
-        )
-
-    def auto_generate_skills(self, limit: Optional[int] = None) -> List[Skill]:
-        """
-        Detect high-frequency memories and generate skills automatically.
-
-        When ``limit`` is omitted, uses ``config.skill_auto_detect_batch_limit`` (``ULTRON_SKILL_AUTO_DETECT_LIMIT``).
-        """
-        return self.skill_generator.auto_detect_and_generate(limit=limit)
-
     def upload_skill(
         self,
         skill_dir: str,
@@ -46,7 +29,6 @@ class SkillMixin:
 
         skill.meta.owner_id = "ultron-system"
         skill.meta.published_at = int(datetime.now().timestamp() * 1000)
-        skill.meta.status = SkillStatus.ACTIVE
 
         _cats = skill.categories
         if not _cats or _cats == ["general"]:
