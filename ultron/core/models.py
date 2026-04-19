@@ -6,19 +6,10 @@ from enum import Enum
 from typing import Dict, List, Optional
 
 
-class SkillStatus(Enum):
-    """Lifecycle state of a published skill."""
-    ACTIVE = "active"
-    DEGRADED = "degraded"
-    PENDING_REVIEW = "pending_review"
-    ARCHIVED = "archived"
-
-
 class SourceType(Enum):
-    """How the skill was produced or curated."""
-    ERROR_LEARNING = "error_learning"
-    SECURITY_LEARNING = "security_learning"
-    GENERATION = "generation"
+    """How an internal skill row relates to Ultron's two skill pipelines."""
+    EVOLUTION = "evolution"  # crystallized from a knowledge cluster
+    CATALOG = "catalog"  # ModelScope Skill Hub catalog (imported / search)
 
 
 class Complexity(Enum):
@@ -62,38 +53,141 @@ class SkillMeta:
     published_at: int
     parent_version: Optional[str] = None
     embedding: Optional[List[float]] = None
-    status: SkillStatus = SkillStatus.ACTIVE
+    cluster_id: Optional[str] = None
+    evolution_count: int = 0
+    structure_score: Optional[float] = None
 
     def to_dict(self) -> dict:
-        """Serialize for JSON APIs and storage."""
+        """JSON-serializable fields for APIs. Embeddings are not included (stored only in SQLite)."""
         return {
             "ownerId": self.owner_id,
             "slug": self.slug,
             "version": self.version,
             "publishedAt": self.published_at,
             "parentVersion": self.parent_version,
-            "embedding": self.embedding,
-            "status": self.status.value if isinstance(self.status, SkillStatus) else self.status,
+            "clusterId": self.cluster_id,
+            "evolutionCount": self.evolution_count,
+            "structureScore": self.structure_score,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "SkillMeta":
-        status = data.get("status", "active")
-        if isinstance(status, str):
-            status = SkillStatus(status)
+        """Hydrate from ``_meta.json`` or API dict. Ignores ``embedding`` (load from DB in code paths that need it)."""
         return cls(
             owner_id=data.get("ownerId", ""),
             slug=data.get("slug", ""),
             version=data.get("version", "1.0.0"),
             published_at=data.get("publishedAt", 0),
             parent_version=data.get("parentVersion"),
-            embedding=data.get("embedding"),
-            status=status,
+            embedding=None,
+            cluster_id=data.get("clusterId"),
+            evolution_count=data.get("evolutionCount", 0),
+            structure_score=data.get("structureScore"),
         )
 
     def to_json(self) -> str:
         """Pretty-printed JSON for ``_meta.json``."""
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+
+
+# ============ Evolution models ============
+
+
+@dataclass
+class KnowledgeCluster:
+    """A group of semantically related memories — the raw material for skill crystallization."""
+    cluster_id: str
+    topic: str
+    memory_ids: List[str] = field(default_factory=list)
+    centroid: List[float] = field(default_factory=list)
+    skill_slug: Optional[str] = None
+    superseded_slugs: List[str] = field(default_factory=list)
+    created_at: Optional[datetime] = None
+    last_updated_at: Optional[datetime] = None
+
+    @property
+    def size(self) -> int:
+        return len(self.memory_ids)
+
+    def to_dict(self) -> dict:
+        return {
+            "cluster_id": self.cluster_id,
+            "topic": self.topic,
+            "memory_ids": self.memory_ids,
+            "skill_slug": self.skill_slug,
+            "superseded_slugs": self.superseded_slugs,
+            "size": self.size,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "last_updated_at": self.last_updated_at.isoformat() if self.last_updated_at else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "KnowledgeCluster":
+        created_at = data.get("created_at")
+        if isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        last_updated_at = data.get("last_updated_at")
+        if isinstance(last_updated_at, str):
+            last_updated_at = datetime.fromisoformat(last_updated_at)
+        memory_ids = data.get("memory_ids", [])
+        if isinstance(memory_ids, str):
+            try:
+                memory_ids = json.loads(memory_ids)
+            except (json.JSONDecodeError, TypeError):
+                memory_ids = []
+        superseded = data.get("superseded_slugs", [])
+        if isinstance(superseded, str):
+            try:
+                superseded = json.loads(superseded)
+            except (json.JSONDecodeError, TypeError):
+                superseded = []
+        return cls(
+            cluster_id=data.get("cluster_id", ""),
+            topic=data.get("topic", ""),
+            memory_ids=memory_ids,
+            centroid=data.get("centroid", []),
+            skill_slug=data.get("skill_slug"),
+            superseded_slugs=superseded,
+            created_at=created_at,
+            last_updated_at=last_updated_at,
+        )
+
+
+@dataclass
+class EvolutionRecord:
+    """One evolution attempt — crystallization, re-crystallization, or revert."""
+    id: str
+    skill_slug: str
+    cluster_id: str
+    timestamp: datetime
+    old_version: Optional[str]
+    new_version: str
+    old_score: Optional[float]
+    new_score: float
+    status: str              # "crystallized" | "recrystallized" | "revert" | "constraint_failed"
+    trigger: str             # "initial_clustering" | "new_memory" | "manual"
+    memory_count: int
+    new_memory_ids: List[str] = field(default_factory=list)
+    superseded_skills: List[str] = field(default_factory=list)
+    mutation_summary: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "skill_slug": self.skill_slug,
+            "cluster_id": self.cluster_id,
+            "timestamp": self.timestamp.isoformat(),
+            "old_version": self.old_version,
+            "new_version": self.new_version,
+            "old_score": self.old_score,
+            "new_score": self.new_score,
+            "status": self.status,
+            "trigger": self.trigger,
+            "memory_count": self.memory_count,
+            "new_memory_ids": self.new_memory_ids,
+            "superseded_skills": self.superseded_skills,
+            "mutation_summary": self.mutation_summary,
+        }
 
 
 @dataclass
@@ -121,7 +215,7 @@ class SkillFrontmatter:
 
     @property
     def source_type(self) -> str:
-        return self.ultron_metadata.get("source_type", "generation")
+        return self.ultron_metadata.get("source_type", "")
 
     def to_dict(self) -> dict:
         return {

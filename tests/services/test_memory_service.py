@@ -518,9 +518,8 @@ class TestMemoryServiceSummariesAndRebalance(unittest.TestCase):
         self.assertEqual(summary["warm"], 40)  # 40% of 100
         self.assertEqual(summary["cold"], 10)  # rest
 
-    def test_tier_rebalance_triggers_skill_for_newly_hot(self):
+    def test_tier_rebalance_counts_newly_hot(self):
         db = MagicMock()
-        # m0 was cold, should become hot
         ranked = [("m0", "cold"), ("m1", "hot")]
         db.get_all_memory_ids_ranked.return_value = ranked
         db.batch_update_tiers.return_value = 1
@@ -532,12 +531,10 @@ class TestMemoryServiceSummariesAndRebalance(unittest.TestCase):
         cfg.warm_max_entries = 1000
         cfg.cold_ttl_days = 0
 
-        gen = MagicMock()
-        svc = MemoryService(db, MagicMock(), config=cfg, skill_generator=gen)
+        svc = MemoryService(db, MagicMock(), config=cfg)
         summary = svc.run_tier_rebalance()
 
         self.assertEqual(summary["newly_hot"], 1)
-        gen.generate_skill_from_memory.assert_called_once_with("m0")
 
 
 class TestMemoryServiceDelegates(unittest.TestCase):
@@ -549,30 +546,6 @@ class TestMemoryServiceDelegates(unittest.TestCase):
         svc = MemoryService(db, MagicMock())
         self.assertEqual(svc.get_memory_stats(), {"total": 3})
         db.get_memory_stats.assert_called_once()
-
-    def test_get_promotion_candidates_delegates(self):
-        db = MagicMock()
-        now = datetime.now().isoformat()
-        db.get_promotion_candidates.return_value = [
-            {
-                "id": "p1",
-                "memory_type": "pattern",
-                "content": "c",
-                "context": "",
-                "resolution": "",
-                "tier": MemoryTier.HOT.value,
-                "hit_count": 5,
-                "status": MemoryStatus.ACTIVE.value,
-                "created_at": now,
-                "last_hit_at": now,
-                "tags": [],
-            }
-        ]
-        svc = MemoryService(db, MagicMock())
-        rows = svc.get_promotion_candidates()
-        self.assertEqual(len(rows), 1)
-        self.assertIsInstance(rows[0], MemoryRecord)
-        self.assertEqual(rows[0].id, "p1")
 
     def test_get_memory_details_increments(self):
         db = MagicMock()

@@ -12,7 +12,6 @@ from ultron.core.models import (
     Skill,
     SkillFrontmatter,
     SkillMeta,
-    SkillStatus,
 )
 from ultron.services.memory import MemorySearchResult
 from ultron.services.skill import RetrievalResult
@@ -42,7 +41,6 @@ def _sample_skill(slug: str = "demo-skill") -> Skill:
         slug=slug,
         version="1.0.0",
         published_at=0,
-        status=SkillStatus.ACTIVE,
     )
     front = SkillFrontmatter(
         name="Demo",
@@ -225,6 +223,98 @@ class TestUltronServerRoutes(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.json().get("success"))
+
+    def test_skills_install_success(self):
+        self.mock_ultron.install_skill_to.return_value = {
+            "success": True, "full_name": "@org/skill", "source": "internal",
+            "installed_path": "/tmp/skill",
+        }
+        r = self.client.post(
+            "/skills/install",
+            json={"full_name": "@org/skill", "target_dir": "/tmp"},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json().get("success"))
+
+    def test_skills_install_failure(self):
+        self.mock_ultron.install_skill_to.return_value = {
+            "success": False, "error": "modelscope CLI not found",
+        }
+        r = self.client.post(
+            "/skills/install",
+            json={"full_name": "@org/skill", "target_dir": "/tmp"},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.json().get("success"))
+
+    def test_dashboard_overview(self):
+        self.mock_ultron.get_memory_stats.return_value = {"by_tier": {"hot": 5}}
+        self.mock_ultron.db._get_connection.return_value.__enter__ = MagicMock(
+            return_value=MagicMock()
+        )
+        self.mock_ultron.db._get_connection.return_value.__exit__ = MagicMock(
+            return_value=False
+        )
+        # Use a real DB for this test to avoid complex mock setup
+        import tempfile, os
+        from ultron.core.database import Database
+        with tempfile.TemporaryDirectory() as tmp:
+            real_db = Database(os.path.join(tmp, "test.db"))
+            self.mock_ultron.db = real_db
+            r = self.client.get("/dashboard/overview")
+            self.assertEqual(r.status_code, 200)
+            data = r.json()
+            self.assertIn("memory", data)
+            self.assertIn("skills", data)
+
+    def test_dashboard_memories(self):
+        self.mock_ultron.db.search_memories_by_text.return_value = ([], 0)
+        r = self.client.get("/dashboard/memories")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn("data", data)
+        self.assertEqual(data["total"], 0)
+
+    def test_dashboard_skills(self):
+        self.mock_ultron.db.search_skills_by_text.return_value = ([], 0)
+        r = self.client.get("/dashboard/skills")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn("data", data)
+        self.assertEqual(data["total"], 0)
+
+    def test_dashboard_leaderboard(self):
+        self.mock_ultron.db.get_memory_leaderboard.return_value = []
+        r = self.client.get("/dashboard/leaderboard")
+        self.assertEqual(r.status_code, 200)
+
+    def test_dashboard_internal_skill_md_found(self):
+        self.mock_ultron.get_internal_skill_md_text.return_value = "# Skill content"
+        r = self.client.get("/dashboard/skills/internal/my-skill/skill-md")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["content"], "# Skill content")
+
+    def test_dashboard_internal_skill_md_not_found(self):
+        self.mock_ultron.get_internal_skill_md_text.return_value = None
+        r = self.client.get("/dashboard/skills/internal/missing-skill/skill-md")
+        self.assertEqual(r.status_code, 404)
+
+    def test_upload_memory_missing_content_rejected(self):
+        r = self.client.post("/memory/upload", json={"context": "c", "resolution": "r", "tags": []})
+        self.assertEqual(r.status_code, 422)
+
+    def test_search_memory_empty_query(self):
+        self.mock_ultron.search_memories.return_value = []
+        r = self.client.post("/memory/search", json={"query": "", "limit": 5})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["count"], 0)
+
+    def test_memory_details_empty_ids(self):
+        self.mock_ultron.get_memory_details.return_value = []
+        r = self.client.post("/memory/details", json={"memory_ids": []})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

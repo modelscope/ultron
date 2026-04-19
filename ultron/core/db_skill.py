@@ -2,13 +2,11 @@
 import json
 import pickle
 import sqlite3
-from datetime import datetime
 from typing import List, Optional, Tuple
 
 from .models import (
     SkillMeta,
     SkillFrontmatter,
-    SkillStatus,
 )
 
 
@@ -30,17 +28,16 @@ class _SkillMixin:
 
             cursor.execute("""
                 INSERT OR REPLACE INTO skills (
-                    slug, version, owner_id, published_at, parent_version, status,
+                    slug, version, owner_id, published_at, parent_version,
                     name, description, categories, complexity, source_type,
                     embedding, local_path, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """, (
                 meta.slug,
                 meta.version,
                 meta.owner_id,
                 meta.published_at,
                 meta.parent_version,
-                meta.status.value if isinstance(meta.status, SkillStatus) else meta.status,
                 frontmatter.name,
                 frontmatter.description,
                 json.dumps(frontmatter.categories, ensure_ascii=False),
@@ -74,7 +71,6 @@ class _SkillMixin:
 
     def get_all_skills(
         self,
-        status: Optional[str] = None,
         categories: Optional[List[str]] = None,
         limit: int = 100,
     ) -> List[dict]:
@@ -83,10 +79,6 @@ class _SkillMixin:
 
             query = "SELECT * FROM skills WHERE 1=1"
             params = []
-
-            if status:
-                query += " AND status = ?"
-                params.append(status)
 
             query += " ORDER BY published_at DESC LIMIT ?"
             params.append(limit)
@@ -107,7 +99,7 @@ class _SkillMixin:
     def get_skills_with_embeddings(self) -> List[Tuple[dict, List[float]]]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM skills WHERE embedding IS NOT NULL AND status = 'active'")
+            cursor.execute("SELECT * FROM skills WHERE embedding IS NOT NULL")
             rows = cursor.fetchall()
 
             results = []
@@ -117,15 +109,6 @@ class _SkillMixin:
                 results.append((skill_dict, embedding))
 
             return results
-
-    def update_skill_status(self, slug: str, version: str, status: SkillStatus) -> bool:
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE skills SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE slug = ? AND version = ?",
-                (status.value, slug, version)
-            )
-            return cursor.rowcount > 0
 
     def _row_to_skill_dict(self, row: sqlite3.Row) -> dict:
         categories = []
@@ -148,7 +131,6 @@ class _SkillMixin:
             "owner_id": row["owner_id"],
             "published_at": row["published_at"],
             "parent_version": row["parent_version"],
-            "status": row["status"],
             "name": row["name"],
             "description": row["description"],
             "categories": categories,
@@ -193,7 +175,7 @@ class _SkillMixin:
             cursor = conn.cursor()
 
             if source != "catalog":
-                conds = ["status = 'active'"]
+                conds = ["1=1"]
                 params: list = []
                 if q:
                     conds.append("(name LIKE ? OR description LIKE ?)")
@@ -262,7 +244,7 @@ class _SkillMixin:
                             "description": r["description_en"] or r["description"] or "",
                             "categories": [r["category_name"]] if r["category_name"] else [],
                             "source": "catalog",
-                            "source_type": "modelscope",
+                            "source_type": "catalog",
                             "created_at": r["created_at"],
                         })
 

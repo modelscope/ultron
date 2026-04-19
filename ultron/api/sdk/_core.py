@@ -89,10 +89,21 @@ class CoreMixin:
         categories) and delete skill files under skills and archive directories.
 
         Call before switching embedding model or vector dimension to avoid mixing vectors.
+        Also removes ``models_dir/embedding_profile.json`` so the next startup can bind a
+        new embedding backend/model/dimension without a stale profile error.
         """
         db_stats = self.db.wipe_all_data()
         storage_stats = self.storage.clear_all_skill_files(include_archive=True)
+        profile_file = self.config.models_dir / "embedding_profile.json"
+        profile_removed = False
+        if profile_file.is_file():
+            try:
+                profile_file.unlink()
+                profile_removed = True
+            except OSError as e:
+                logger.warning("Could not remove embedding profile %s: %s", profile_file, e)
         return {
             "database": db_stats,
             "storage": storage_stats,
+            "embedding_profile_removed": profile_removed,
         }

@@ -1,8 +1,8 @@
 ---
-
-## slug: SDK
+slug: SDK
 title: Python SDK
-description: Ultron (奥创) Python SDK 参考
+description: Ultron（奥创）Python SDK 参考
+---
 
 # Python SDK
 
@@ -103,6 +103,7 @@ stats = ultron.get_memory_stats() -> dict
 ```python
 result = ultron.ingest(
     paths: List[str],
+    agent_id: str = "", 
 ) -> dict
 ```
 
@@ -118,35 +119,11 @@ result = ultron.ingest_text(
 
 ---
 
-## 技能生成
-
-### generate_skill_from_memory
-
-从已确认的记忆生成技能。
-
-```python
-skill = ultron.generate_skill_from_memory(
-    memory_id: str,
-) -> Optional[Skill]
-```
-
-### auto_generate_skills
-
-扫描高频记忆，自动批量生成技能。
-
-```python
-skills = ultron.auto_generate_skills(
-    limit: int = None,  # None 时使用 UltronConfig.skill_auto_detect_batch_limit（ULTRON_SKILL_AUTO_DETECT_LIMIT）
-) -> List[Skill]
-```
-
----
-
 ## 层级重分配
 
 ### run_tier_rebalance
 
-按 `hit_count` 百分位重分配 HOT/WARM/COLD 层级，归档超期 COLD 记忆，触发新 HOT 记忆的技能生成。
+按 `hit_count` 百分位重分配 HOT/WARM/COLD 层级，归档超期 COLD 记忆。
 
 ```python
 summary = ultron.run_tier_rebalance() -> dict
@@ -257,6 +234,37 @@ result = ultron.install_skill_to(
 # result: {"success": true, "source": "catalog", "installed_path": "..."}
 ```
 
+### upload_skill
+
+上传单个技能目录。
+
+```python
+skill = ultron.upload_skill(
+    skill_dir: str,
+) -> Optional[Skill]
+```
+
+### get_skill
+
+按 slug 获取技能，可选指定版本。
+
+```python
+skill = ultron.get_skill(
+    slug: str,
+    version: Optional[str] = None,
+) -> Optional[Skill]
+```
+
+### get_internal_skill_md_text
+
+获取内部技能的原始 SKILL.md 文本。
+
+```python
+text = ultron.get_internal_skill_md_text(
+    slug: str,
+) -> Optional[str]
+```
+
 ### list_all_skills
 
 列出所有技能。
@@ -264,6 +272,17 @@ result = ultron.install_skill_to(
 ```python
 skills = ultron.list_all_skills() -> List[dict]
 ```
+
+### Skill evolution and clusters
+
+面向**服务端与运维**：结晶与重新结晶在服务端 `_decay_loop` 中执行，**不提供**对外 HTTP。在与 `Ultron` **同一进程、同一 `data_dir`/数据库**下排障或观测时，可直接使用底层 SQLite `Database`（`ultron.db`）：
+
+```python
+clusters = ultron.db.get_all_clusters()
+rows = ultron.db.get_evolution_history("my-skill-slug", limit=20)
+```
+
+若需在独立脚本中手动跑一轮进化，使用与数据目录一致的 `UltronConfig` 构造 `SkillEvolutionEngine` 并调用 `run_evolution_cycle()`，见 `ultron.services.skill.skill_evolution`。
 
 ---
 
@@ -320,27 +339,23 @@ profile = ultron.get_harness_profile(
 ) -> Optional[dict]
 ```
 
+### get_profiles_by_user
+
+列出该用户下全部工作空间 profile。
+
+```python
+profiles = ultron.get_profiles_by_user(user_id: str) -> list
+```
+
 ### create_harness_share
 
-从当前 profile 创建分享 token。
+从当前 profile 创建分享 token（无 profile 时会抛错，需先 `harness_sync_up`）。若同一 agent 已有分享，会复用 token 并刷新快照。
 
 ```python
 share = ultron.create_harness_share(
     user_id: str,
     agent_id: str,
-    visibility: str = "link",
-) -> dict
-```
-
-### import_harness_share
-
-导入分享配置到目标用户的设备。
-
-```python
-profile = ultron.import_harness_share(
-    token: str,
-    target_user_id: str,
-    target_agent_id: str,
+    visibility: str = "public",
 ) -> dict
 ```
 
@@ -366,7 +381,7 @@ ok = ultron.delete_harness_share(token: str) -> bool
 
 ### get_stats
 
-获取系统统计。
+聚合技能存储、分类统计、嵌入模型信息与记忆统计（与 HTTP `GET /stats` 数据结构一致）。
 
 ```python
 stats = ultron.get_stats() -> dict
@@ -455,13 +470,13 @@ from ultron import (
     # 配置
     UltronConfig,
     default_config,
+    load_ultron_dotenv,
 
     # 模型 - 技能
     Skill,
     SkillMeta,
     SkillFrontmatter,
     SkillUsageRecord,
-    SkillStatus,
     SourceType,
     Complexity,
 

@@ -16,10 +16,9 @@ ULTRON documentation
    :caption: Core components
 
    Components/Config
-   Components/MemoryService
+   Components/MemoryHub
    Components/SkillHub
    Components/HarnessHub
-   Components/SmartIngestion
 
 .. toctree::
    :maxdepth: 2

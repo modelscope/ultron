@@ -100,20 +100,16 @@ async def dashboard_overview():
     if u is None:
         raise RuntimeError("Server not initialized")
     mem_stats = u.get_memory_stats()
-    internal_count = (
-        u.db.count_skills(status="active")
-        if hasattr(u.db, "count_skills")
-        else 0
-    )
+    internal_count = 0
     try:
         with u.db._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM skills WHERE status = 'active'")
+            cursor.execute("SELECT COUNT(*) FROM skills")
             internal_count = cursor.fetchone()[0]
             cursor.execute("SELECT COUNT(*) FROM catalog_skills")
             catalog_count = cursor.fetchone()[0]
             cursor.execute(
-                "SELECT categories, COUNT(*) as cnt FROM skills WHERE status = 'active' GROUP BY categories"
+                "SELECT categories, COUNT(*) as cnt FROM skills GROUP BY categories"
             )
             skill_cats: dict = {}
             for r in cursor.fetchall():
@@ -216,6 +212,21 @@ async def dashboard_skills(
         offset=offset,
     )
     return {"data": rows, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/dashboard/skills/internal/{slug}/skill-md")
+async def dashboard_internal_skill_md(slug: str):
+    """Return raw SKILL.md text for an internal (Ultron-published) skill."""
+    u = server_state.ultron
+    if u is None:
+        raise RuntimeError("Server not initialized")
+    text = u.get_internal_skill_md_text(slug)
+    if text is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Skill not found or SKILL.md missing on server",
+        )
+    return {"slug": slug, "content": text}
 
 
 @router.get("/dashboard/leaderboard")

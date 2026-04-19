@@ -38,12 +38,11 @@ class _DatabaseBase:
                     owner_id TEXT NOT NULL,
                     published_at INTEGER NOT NULL,
                     parent_version TEXT,
-                    status TEXT DEFAULT 'active',
                     name TEXT NOT NULL,
                     description TEXT,
                     categories TEXT,
                     complexity TEXT DEFAULT 'medium',
-                    source_type TEXT DEFAULT 'generation',
+                    source_type TEXT DEFAULT '',
                     embedding BLOB,
                     local_path TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -110,7 +109,6 @@ class _DatabaseBase:
 
             # Indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_skills_slug ON skills(slug)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_skill ON skill_usage_records(skill_slug)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_time ON skill_usage_records(used_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_error_type ON error_learning_records(error_type)")

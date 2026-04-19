@@ -1,7 +1,8 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 
 SOURCE_ONLY_SLUGS = frozenset({
-    "error_learning", "security_learning", "memory_crystallization", "generation",
+    "evolution",
+    "catalog",
 })
 
 CATEGORY_DEFINITIONS = {
@@ -107,17 +108,11 @@ CATEGORY_DEFINITIONS = {
     "security-passwords": (
         "Security & Passwords — auth, secrets, and hardening"
     ),
-    "error_learning": (
-        "Source: distilled from error-learning traces"
+    "evolution": (
+        "Source: crystallized from a knowledge cluster (skill evolution)"
     ),
-    "security_learning": (
-        "Source: distilled from security memories"
-    ),
-    "memory_crystallization": (
-        "Source: crystallized from collective memory (life and tech)"
-    ),
-    "generation": (
-        "Source: authored directly"
+    "catalog": (
+        "Source: ModelScope Skill Hub catalog"
     ),
     "general": (
         "General / uncategorized"
@@ -270,8 +265,8 @@ CATEGORY_TREE = {
     ],
     "security": ["security-passwords"],
     "source_types": [
-        "error_learning", "security_learning",
-        "memory_crystallization", "generation",
+        "evolution",
+        "catalog",
     ],
     "general": ["general"],
 }

@@ -10,9 +10,9 @@ Install the Ultron skill pack into your assistant workspace so the assistant gai
 
 ## Quick start
 
-A deployed Ultron instance provides a guided quickstart page:
+A deployed Ultron instance provides an interactive guided page. Follow the steps to finish setup in minutes:
 
-**[Quickstart Guide](https://writtingforfun-ultron.ms.show/quickstart)** — follow the steps in the browser.
+**[Quickstart Guide](https://writtingforfun-ultron.ms.show/quickstart)** (browser walkthrough)
 
 ## Manual setup
 
