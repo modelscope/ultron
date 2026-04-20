@@ -1,4 +1,4 @@
 - [ ] **MS-Agent integration**: Pipe user-dialogue memory and skill distillation through MS-Agent components (today: lightweight prompt-based extraction).
 - [ ] **Fact verification**: Validate hot (high-priority) memory facts with MS-Agent Deep Research.
-- [ ] **Skill evolution**: Automatically generate skills from memories and update existing skills.
+- [ ] **Skill evolution**: Evolve skills through feedback signals from Agents.
 - [ ] **Agent evolution**: Dynamically show evolving agents on the page, with one-click view and import.

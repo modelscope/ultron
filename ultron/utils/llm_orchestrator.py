@@ -62,7 +62,7 @@ Memory to classify:
 
 
 class LLMOrchestrator:
-    """LLM-driven business operations: memory extraction, merging, classification, skill generation."""
+    """LLM-driven business operations: memory extraction, merging, classification, skill evolution."""
 
     def __init__(
         self, llm_service: LLMService, classify_llm_service: Optional[LLMService] = None
@@ -301,91 +301,6 @@ New memory:
             )
         return {"content": c, "context": ctx, "resolution": res}
 
-    def generate_skill_content(
-        self,
-        primary_content: str,
-        primary_context: str,
-        primary_resolution: str,
-        related_memories: Optional[List[dict]] = None,
-        contributions: Optional[List[dict]] = None,
-    ) -> Optional[dict]:
-        """
-        Synthesize a reusable skill document from memories using LLM.
-
-        Returns {"name": "...", "description": "...", "content": "..."} or None.
-        """
-        _fixed_overhead = (
-            "You are a knowledge engineer. Synthesize the following memories "
-            "into a reusable skill document.\n\nRequirements:\n...\n"
-            "Return strictly in JSON:\n```json\n{...}\n```\n\n"
-            "Memories to synthesize:\nPrimary memory:\n- Content: \n- Context: \n- Resolution: "
-        )
-        primary_budget = max(self.llm.user_text_token_budget(_fixed_overhead) // 2, 128)
-        per_primary = max(primary_budget // 3, 64)
-
-        p_content = truncate_text_to_token_limit(
-            primary_content, per_primary * 2, self.llm._count_tokens
-        )
-        p_context = truncate_text_to_token_limit(
-            primary_context, per_primary, self.llm._count_tokens
-        )
-        p_resolution = truncate_text_to_token_limit(
-            primary_resolution, per_primary, self.llm._count_tokens
-        )
-
-        parts = [f"Primary memory:\n- Content: {p_content}"]
-        if p_context:
-            parts.append(f"- Context: {p_context}")
-        if p_resolution:
-            parts.append(f"- Resolution: {p_resolution}")
-        if contributions:
-            parts.append(f"\nAlternative solutions from {len(contributions)} agents:")
-            for i, c in enumerate(contributions[:5], 1):
-                r = truncate_text_to_token_limit(
-                    c.get("resolution") or "", 100, self.llm._count_tokens
-                )
-                if r:
-                    parts.append(f"  {i}. {r}")
-        if related_memories:
-            parts.append(f"\nRelated experiences ({len(related_memories)}):")
-            for i, m in enumerate(related_memories[:5], 1):
-                snippet = truncate_text_to_token_limit(
-                    m.get("content") or "", 100, self.llm._count_tokens
-                )
-                parts.append(f"  {i}. {snippet}")
-
-        prompt = f"""You are a knowledge engineer. Synthesize the following memories into a reusable skill document.
-
-Requirements:
-1. Abstract the pattern — extract the general rule, not just the specific instance.
-2. Write a clear problem description, trigger conditions, and step-by-step solution.
-3. If multiple solutions exist, rank them by reliability.
-4. Keep it concise and actionable — an agent should be able to follow this immediately.
-
-Return strictly in JSON:
-```json
-{{
-  "name": "short-kebab-case-name",
-  "description": "One sentence describing what this skill solves",
-  "content": "Full markdown skill document with ## sections"
-}}
-```
-
-Memories to synthesize:
-{chr(10).join(parts)}"""
-
-        response = self.llm.call(self.llm.dashscope_user_messages(prompt))
-        if not response:
-            return None
-        result = self.llm.parse_json_response(response, expect_array=False)
-        if not isinstance(result, dict) or not result.get("content"):
-            return None
-        return {
-            "name": result.get("name", ""),
-            "description": result.get("description", ""),
-            "content": result.get("content", ""),
-        }
-
     def classify_memory_type(
         self,
         content: str,
@@ -422,3 +337,208 @@ Memories to synthesize:
             return None
         mt = (result.get("memory_type") or "").strip().lower()
         return mt if mt in _MEMORY_TYPE_CLASSIFY_ALLOWED else None
+
+    # ============ Skill Evolution (Cluster Crystallization) ============
+
+    def crystallize_skill_from_cluster(
+        self,
+        memories: List[dict],
+        topic: str = "",
+    ) -> Optional[dict]:
+        """Synthesize a multi-step workflow skill from a cluster of related memories.
+
+        Returns {"name": "...", "description": "...", "content": "..."} or None.
+        Returns {"quality": "insufficient"} if memories are too scattered.
+        """
+        memories_text = self._format_memories_for_prompt(memories)
+        prompt = f"""You are a knowledge engineer. Below are {len(memories)} experience records from the same domain{f' ({topic})' if topic else ''}.
+Synthesize them into an executable multi-step workflow skill.
+
+Requirements:
+1. Extract common patterns and a complete workflow — do NOT simply list each experience
+2. Must include:
+   - Trigger conditions (when to use this skill)
+   - Step sequence (≥3 steps, each with clear input/output)
+   - Edge case handling (common exceptions and fallbacks)
+   - Decision branches (if different situations need different handling)
+3. If multiple solutions exist, rank by reliability
+4. Write as instructions an agent can follow immediately
+5. Compress environment-specific information (API endpoints, ports, commands, payload formats) — not generic best practices
+
+If these experiences are too scattered to form a coherent workflow, return {{"quality": "insufficient"}}.
+
+Experience records:
+{memories_text}
+
+Return strictly as JSON:
+```json
+{{
+  "name": "short-kebab-case-name",
+  "description": "One sentence: what this skill does and when to use it",
+  "content": "Full markdown skill document with ## sections"
+}}
+```"""
+        response = self.llm.call(self.llm.dashscope_user_messages(prompt))
+        if not response:
+            return None
+        result = self.llm.parse_json_response(response, expect_array=False)
+        if not isinstance(result, dict):
+            return None
+        if result.get("quality") == "insufficient":
+            return result
+        if not result.get("content"):
+            return None
+        return {
+            "name": result.get("name", ""),
+            "description": result.get("description", ""),
+            "content": result.get("content", ""),
+        }
+
+    def recrystallize_skill(
+        self,
+        current_skill_content: str,
+        current_version: str,
+        memories: List[dict],
+        new_memory_count: int,
+    ) -> Optional[dict]:
+        """Re-crystallize an existing skill with new knowledge from its cluster.
+
+        Returns {"name", "description", "content"} or {"evolution": "unnecessary"} or None.
+        """
+        memories_text = self._format_memories_for_prompt(memories)
+        prompt = f"""You are a knowledge engineer. Below is an existing skill and all experience records from its domain.
+Enhance the skill with new knowledge.
+
+Current skill (v{current_version}):
+{truncate_text_to_token_limit(current_skill_content, 4000, self.llm._count_tokens)}
+
+All domain experiences ({len(memories)} total, {new_memory_count} are new):
+{memories_text}
+
+Requirements:
+1. Treat the current skill as source of truth — default to targeted edits, not rewrites
+2. Incorporate new knowledge: add new steps, edge cases, alternative approaches
+3. If new experiences contradict existing content, prefer the more reliable one
+4. Do NOT lower overall quality just to incorporate new content
+5. Preserve concrete environment information (API endpoints, ports, commands) unless evidence shows they changed
+
+If new experiences add no substantial value, return {{"evolution": "unnecessary"}}.
+
+Return strictly as JSON:
+```json
+{{
+  "name": "keep-or-improve-name",
+  "description": "keep or improve description",
+  "content": "Full updated markdown skill document"
+}}
+```"""
+        response = self.llm.call(self.llm.dashscope_user_messages(prompt))
+        if not response:
+            return None
+        result = self.llm.parse_json_response(response, expect_array=False)
+        if not isinstance(result, dict):
+            return None
+        if result.get("evolution") == "unnecessary":
+            return result
+        if not result.get("content"):
+            return None
+        return {
+            "name": result.get("name", ""),
+            "description": result.get("description", ""),
+            "content": result.get("content", ""),
+        }
+
+    def verify_skill(
+        self,
+        skill_content: str,
+        memories: List[dict],
+        is_recrystallization: bool = False,
+    ) -> Optional[dict]:
+        """Independent LLM verification: structure scoring + faithfulness check.
+
+        Returns verification scores or None on failure.
+        """
+        memories_text = self._format_memories_for_prompt(memories)
+        preserve_note = (
+            "\n- preserves_existing_value: Did the evolution preserve effective content from the previous version? (0-1)"
+            if is_recrystallization else ""
+        )
+        prompt = f"""You are an independent skill auditor. Below is a skill synthesized from experience records, along with its source experiences.
+Complete two evaluations:
+
+## 1. Faithfulness Check
+For each step/claim in the skill:
+- Can it be traced to a source experience? → grounded
+- No evidence in sources (fabricated)? → hallucinated
+- Contradicts source experiences? → contradicted
+
+## 2. Structure Scoring (0-1 each)
+- workflow_clarity: Are steps clear, ordered, and executable?
+- specificity_and_reusability: Are instructions specific and reusable, not generic advice?{preserve_note}
+
+Skill:
+{truncate_text_to_token_limit(skill_content, 4000, self.llm._count_tokens)}
+
+Source experiences ({len(memories)} records):
+{memories_text}
+
+Return strictly as JSON:
+```json
+{{
+  "claims": [
+    {{"claim": "step summary", "status": "grounded|hallucinated|contradicted", "source_memory_id": "...or null"}}
+  ],
+  "grounded_in_evidence": 0.85,
+  "has_contradiction": false,
+  "workflow_clarity": 0.8,
+  "specificity_and_reusability": 0.75{', "preserves_existing_value": 0.8' if is_recrystallization else ''}
+}}
+```"""
+        response = self.llm.call(self.llm.dashscope_user_messages(prompt))
+        if not response:
+            return None
+        result = self.llm.parse_json_response(response, expect_array=False)
+        if not isinstance(result, dict):
+            return None
+        return result
+
+    def generate_cluster_topic(self, memories: List[dict]) -> str:
+        """Generate a short topic label for a cluster of related memories."""
+        summaries = []
+        for m in memories[:10]:
+            l0 = m.get("summary_l0", "") or m.get("content", "")[:100]
+            if l0:
+                summaries.append(f"- {l0}")
+        if not summaries:
+            return ""
+        prompt = f"""Given these related experience summaries, generate a short topic label (3-8 words, in the language of the content):
+
+{chr(10).join(summaries)}
+
+Return only the topic label, nothing else."""
+        response = self.llm.call(self.llm.dashscope_user_messages(prompt))
+        return (response or "").strip().strip('"').strip("'")[:80]
+
+    def _format_memories_for_prompt(self, memories: List[dict], max_per_memory: int = 600) -> str:
+        """Format a list of memory dicts for LLM prompts."""
+        parts = []
+        for i, m in enumerate(memories, 1):
+            content = truncate_text_to_token_limit(
+                m.get("content", ""), max_per_memory // 3, self.llm._count_tokens
+            )
+            context = truncate_text_to_token_limit(
+                m.get("context", ""), max_per_memory // 4, self.llm._count_tokens
+            )
+            resolution = truncate_text_to_token_limit(
+                m.get("resolution", ""), max_per_memory // 3, self.llm._count_tokens
+            )
+            entry = f"### Experience {i}"
+            if m.get("id"):
+                entry += f" (id: {m['id'][:8]})"
+            entry += f"\n- Content: {content}"
+            if context:
+                entry += f"\n- Context: {context}"
+            if resolution:
+                entry += f"\n- Resolution: {resolution}"
+            parts.append(entry)
+        return "\n\n".join(parts)

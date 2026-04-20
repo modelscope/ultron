@@ -36,7 +36,7 @@ class CategoryInfo:
 class SkillCatalogService:
     """
     ClawHub-style category taxonomy in SQLite. ``suggest_categories`` prefers
-    an LLM (default ``qwen3.5-flash`` via config) and falls back to keyword hits.
+    an LLM (default ``qwen3.6-flash`` via config) and falls back to keyword hits.
     """
 
     def __init__(
@@ -73,7 +73,7 @@ class SkillCatalogService:
     def get_all_categories(self) -> List[CategoryInfo]:
         """All categories with active skill counts, sorted by count descending."""
         categories = self.db.get_all_categories()
-        skills = self.db.get_all_skills(status="active", limit=10000)
+        skills = self.db.get_all_skills(limit=10000)
 
         skill_counts = {}
         for skill in skills:

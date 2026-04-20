@@ -14,6 +14,8 @@ export default function SkillsPage() {
   const [category, setCategory] = useState('');
   const [categories, setCategories] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [internalMdBySlug, setInternalMdBySlug] = useState<Record<string, string | null>>({});
+  const [internalMdLoading, setInternalMdLoading] = useState<string | null>(null);
 
   useEffect(() => {
     api('/dashboard/overview').then(d => {
@@ -33,6 +35,36 @@ export default function SkillsPage() {
   }, [query, source, category, page]);
 
   useEffect(() => { loadSkills(); }, [loadSkills]);
+
+  useEffect(() => {
+    if (!expandedId) {
+      setInternalMdLoading(null);
+      return;
+    }
+    const row = skills.find(s => s.id === expandedId);
+    if (!row || row.source !== 'internal') {
+      setInternalMdLoading(null);
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(internalMdBySlug, expandedId)) {
+      setInternalMdLoading(null);
+      return;
+    }
+    let cancelled = false;
+    setInternalMdLoading(expandedId);
+    api(`/dashboard/skills/internal/${encodeURIComponent(expandedId)}/skill-md`)
+      .then((d: { content?: string }) => {
+        if (cancelled) return;
+        setInternalMdBySlug(m => ({ ...m, [expandedId]: d.content ?? '' }));
+        setInternalMdLoading(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setInternalMdBySlug(m => ({ ...m, [expandedId]: null }));
+        setInternalMdLoading(null);
+      });
+    return () => { cancelled = true; };
+  }, [expandedId, skills, internalMdBySlug]);
 
   return (
     <div className="p-6 space-y-6 max-w-[1200px] mx-auto">
@@ -95,9 +127,29 @@ export default function SkillsPage() {
                   )}
                 </div>
                 {expandedId === s.id && (
-                  <div className="mt-4 pt-4 border-t border-border text-sm text-muted animate-slide-up">
-                    <p>{s.description || t('skills.noDescription')}</p>
-                    <p className="text-xs text-mid-gray mt-2">{t('skills.idLabel')}: {s.id}</p>
+                  <div className="mt-4 pt-4 border-t border-border text-sm text-muted animate-slide-up space-y-3">
+                    {s.source === 'internal' ? (
+                      <>
+                        <div>
+                          <span className="kicker text-xs uppercase tracking-wide text-mid-gray">{t('skills.skillMd')}</span>
+                          {internalMdLoading === s.id ? (
+                            <p className="mt-1 text-xs text-mid-gray">{t('skills.loadingSkillMd')}</p>
+                          ) : internalMdBySlug[s.id] != null ? (
+                            <pre className="mt-1 p-3 bg-paper rounded text-xs whitespace-pre-wrap break-words max-h-[480px] overflow-y-auto text-foreground">
+                              {internalMdBySlug[s.id]}
+                            </pre>
+                          ) : (
+                            <p className="mt-1 text-xs text-mid-gray">{t('skills.skillMdUnavailable')}</p>
+                          )}
+                        </div>
+                        <p className="text-xs text-mid-gray">{t('skills.idLabel')}: {s.id}</p>
+                      </>
+                    ) : (
+                      <>
+                        <p>{s.description || t('skills.noDescription')}</p>
+                        <p className="text-xs text-mid-gray">{t('skills.idLabel')}: {s.id}</p>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

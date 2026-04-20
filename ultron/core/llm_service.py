@@ -50,7 +50,7 @@ class LLMService:
     def __init__(
         self,
         provider: str = "dashscope",
-        model: str = "qwen3.5-flash",
+        model: str = "qwen3.6-flash",
         base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
         api_key: str = "",
         max_input_tokens: int = 200_000,

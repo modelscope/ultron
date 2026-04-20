@@ -126,7 +126,6 @@ class SkillParser:
 
         if 'ultron' not in metadata:
             metadata['ultron'] = {
-                'source_type': 'generation',
                 'categories': ['general'],
                 'complexity': 'medium',
             }

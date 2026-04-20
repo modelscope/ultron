@@ -1,7 +1,7 @@
 ---
 slug: Installation
 title: Server deployment
-description: How to self-host the Ultron server
+description: Deploy and run the Ultron server (self-hosted)
 ---
 
 # Server deployment
@@ -63,9 +63,9 @@ Other optional variables (full `ULTRON_*` list in [Configuration](../Components/
 | `ULTRON_EMBEDDING_BACKEND` | Embedding backend (`dashscope` or `local`) | `dashscope` |
 | `ULTRON_EMBEDDING_DIMENSION` | Vector dimension | `1024` |
 | `ULTRON_LLM_PROVIDER` | OpenAI-compatible provider selector | `dashscope` |
-| `ULTRON_MODEL` | LLM for smart ingestion and extraction | `qwen3.5-flash` |
-| `ULTRON_MEMORY_CATEGORY_MODEL` | LLM for memory type classification | `qwen3.5-flash` |
-| `ULTRON_SKILL_CATEGORY_MODEL` | LLM for skill taxonomy | `qwen3.5-flash` |
+| `ULTRON_MODEL` | LLM for smart ingestion and extraction | `qwen3.6-flash` |
+| `ULTRON_MEMORY_CATEGORY_MODEL` | LLM for memory type classification | `qwen3.6-flash` |
+| `ULTRON_SKILL_CATEGORY_MODEL` | LLM for skill taxonomy | `qwen3.6-flash` |
 | `ULTRON_BASE_URL` | OpenAI-compatible API base | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | `ULTRON_API_KEY` | LLM API key | `""` |
 
@@ -108,7 +108,6 @@ Other optional variables (full `ULTRON_*` list in [Configuration](../Components/
 | `ULTRON_ENABLE_INTENT_ANALYSIS` | Intent analysis before search (`0` off) | `1` |
 | `ULTRON_MEMORY_SEARCH_LIMIT` | Default memory search limit | `10` |
 | `ULTRON_SKILL_SEARCH_LIMIT` | Default skill search limit | `5` |
-| `ULTRON_SKILL_AUTO_DETECT_LIMIT` | HOT batch limit for auto skill generation | `5` |
 | `ULTRON_DECAY_INTERVAL_HOURS` | Decay job interval (hours) | `6.0` |
 | `ULTRON_DECAY_ALPHA` | Freshness coefficient | `0.05` |
 | `ULTRON_COLD_TTL_DAYS` | COLD retention days (`0` = never delete) | `30` |

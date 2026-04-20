@@ -18,10 +18,9 @@ ULTRON (奥创) 文档
    :caption: 核心组件
 
    Components/Config
-   Components/MemoryService
+   Components/MemoryHub
    Components/SkillHub
    Components/HarnessHub
-   Components/SmartIngestion
 
 .. toctree::
    :maxdepth: 2

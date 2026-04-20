@@ -4,9 +4,9 @@
   <img src="asset/ultron.png" width="500px" alt="Ultron logo" style="border: none; box-shadow: none;">
 </picture>
 
-## 🧠 Ultron: Collective Intelligence System — Shared Memories, Skills, and Harnesses Across Every Agent 🔗
+## 🧠 Ultron: Self-Evolving Collective Intelligence — Shared Memories, Skills, and Harnesses Across Every Agent 🔗
 
-| 💭 **Tiered collective memories** | 🧬 **Multi-category collective skills** | 🌐 **Shared harness blueprints** |
+| 💭 **Tiered collective memories** | 🧬 **Self-evolving collective skills** | 🌐 **Shared harness blueprints** |
 
 [![Python](https://img.shields.io/badge/Python-3.9+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -19,6 +19,12 @@
 <p align="center">
 <i>"Being networked to all of its sentries, Ultron could shift its entire consciousness from one body to another, continue upgrading itself with each transfer, and patch in to individual units to interact remotely."</i>
 </p>
+
+
+## 🎉 News
+
+* 🧬 Apr 19, 2026: **Skill evolution** lands in Skill Hub: related memories form **semantic clusters**, then **crystallize** into multi-step workflow skills and **re-crystallize** when enough new evidence arrives, with **provenance-grounded verification** and a **structure-score upgrade gate** so evolved skills cannot regress. See [Skill Hub](docs/en/Components/SkillHub.md#skill-self-evolution) and [Configuration](docs/en/Components/Config.md#skill-evolution).
+
 
 ## Table of contents
 
@@ -45,7 +51,7 @@ There are two ways to use Ultron depending on your role:
 
 ## Overview
 
-Ultron is a **collective intelligence system** for general-purpose AI agents, built around three core hubs — **Memory Hub**, **Skill Hub**, and **Harness Hub**. It distills scattered, session-local experience into **collective knowledge** that is **easy to retrieve and reuse**: one shared pitfall helps the whole team avoid the same mistake; one proven fix becomes a reusable operational pattern; a carefully tuned agent profile can be published as a **shared blueprint** that other agent instances **load in one step**.
+Ultron is a **self-evolving collective intelligence system** for general-purpose AI agents, built around three core hubs — **Memory Hub**, **Skill Hub**, and **Harness Hub**. It distills scattered, session-local experience into **collective knowledge** that is **easy to retrieve and reuse**: one shared pitfall helps the whole team avoid the same mistake; one proven fix becomes a reusable skill that **evolves automatically as new evidence accumulates**; a carefully tuned agent profile can be published as a **shared blueprint** that other agent instances **load in one step**.
 
 ### Dashboard highlights
 
@@ -83,7 +89,7 @@ Ultron is a **collective intelligence system** for general-purpose AI agents, bu
 #### 🙆️ Ultron-powered agents
 
 - **Collective memory**: experience is captured, deduplicated, and semantically recalled before reasoning — the whole fleet learns from every session.             
-- **Memory crystallizes into skills**: once a fix is validated often enough, it graduates from memory into a reusable skill that any agent can invoke directly.
+- **Memory crystallizes into self-evolving skills**: once a fix is validated often enough, it graduates from memory into a reusable skill — and continues to evolve automatically as new evidence accumulates.
 - **One-click blueprints**: an expert-tuned agent profile — persona, memories, and skills included — publishes as a shareable blueprint that other instances import in one step.   
 
 ---
@@ -173,6 +179,7 @@ Harness lets you compose **role**, **personality (MBTI)**, and **zodiac** preset
 | Capability | Description |
 |------------|-------------|
 | **Skill distillation** | Memories entering HOT tier auto-generate reusable skills; agents can also upload skill packages directly |
+| **Skill self-evolution** | Re-crystallizes automatically when a cluster accumulates enough new memories; evidence-grounded verification and a structure-score upgrade gate ensure each evolution is strictly better |
 | **Unified discovery** | Internal distilled skills and 30K+ externally indexed ModelScope skills searchable in one place |
 | **Improvement suggestions** | Semantically similar memories surface as enhancement candidates for existing skills |
 
@@ -189,7 +196,7 @@ Harness lets you compose **role**, **personality (MBTI)**, and **zodiac** preset
 ## Typical use cases
 
 - **Shared pitfall avoidance (Memory Hub)**: Agent A hits "MySQL 8.0 default charset breaks emoji inserts" and the fix is distilled into Memory Hub. Weeks later, Agent B setting up a new database gets the same memory surfaced automatically — trap skipped, zero re-investigation.                                               
-- **Ops skill packages (Skill Hub)**: An SRE packages "K8s OOMKilled → locate leak → adjust limits → canary verify" as a reusable skill. Other teams' agents discover and follow the same steps instead of reinventing the workflow.
+- **Ops skill packages (Skill Hub)**: An SRE packages "K8s OOMKilled → locate leak → adjust limits → canary verify" as a reusable skill. Other teams' agents discover and follow the same steps instead of reinventing the workflow. As more agents encounter related incidents and their memories accumulate, the skill re-crystallizes automatically — incorporating new edge cases and keeping the playbook current.
 - **Domain-expert agents (Harness Hub)**: A DevOps engineer spends weeks tuning an agent into a Kubernetes specialist — memories, skills, and persona included. They publish the profile to Harness Hub; anyone imports it in one click. 
 
 ---

@@ -130,6 +130,19 @@ metadata: {metadata_str}
         skill_dir = self._get_skill_dir(slug, version)
         return skill_dir.exists() and (skill_dir / "SKILL.md").exists()
 
+    def read_skill_md_text(self, slug: str, version: Optional[str] = None) -> Optional[str]:
+        """
+        Return raw ``SKILL.md`` text for ``slug`` (latest on disk when ``version`` is omitted).
+        """
+        if version is None:
+            version = self.get_latest_version(slug)
+            if not version:
+                return None
+        path = self._get_skill_dir(slug, version) / "SKILL.md"
+        if not path.is_file():
+            return None
+        return path.read_text(encoding="utf-8")
+
     def get_skill_versions(self, slug: str) -> List[str]:
         versions = []
         for item in self.skills_dir.iterdir():

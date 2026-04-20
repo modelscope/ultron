@@ -3,7 +3,6 @@ from .models import (
     SkillFrontmatter,
     Skill,
     SkillUsageRecord,
-    SkillStatus,
 )
 from .database import Database
 from .storage import SkillStorage
@@ -14,7 +13,6 @@ __all__ = [
     "SkillFrontmatter",
     "Skill",
     "SkillUsageRecord",
-    "SkillStatus",
     "Database",
     "SkillStorage",
     "EmbeddingService",

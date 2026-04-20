@@ -21,6 +21,8 @@ from ultron.core.logging import setup_logging, set_trace_id, log_event
 from ultron.services.auth import AuthService
 from ultron.services.harness.soul_presets import SoulPresetService
 from ultron.services.harness.showcase import ShowcaseService
+from ultron.services.skill.skill_cluster import KnowledgeClusterService
+from ultron.services.skill.skill_evolution import SkillEvolutionEngine
 
 embedding_queue = None
 _decay_task = None
@@ -42,8 +44,28 @@ server_state.soul_preset_service.load()
 server_state.showcase_service = ShowcaseService()
 server_state.showcase_service.load()
 
+# Initialize evolution services
+_u = server_state.ultron
+server_state.cluster_service = KnowledgeClusterService(
+    _u.db, _u.embedding, _u.config,
+)
+server_state.evolution_engine = SkillEvolutionEngine(
+    database=_u.db,
+    storage=_u.storage,
+    embedding_service=_u.embedding,
+    cluster_service=server_state.cluster_service,
+    config=_u.config,
+    llm_orchestrator=_u.llm_orchestrator,
+    catalog=_u.catalog,
+)
+
 
 async def _decay_loop():
+    """Periodic job: tier rebalance (HOT/WARM/COLD) then skill evolution on the same tick.
+
+    Schedule is ``decay_interval_hours`` only; there is no separate timer for evolution.
+    Consolidation runs after both when enabled.
+    """
     u = server_state.ultron
     assert u is not None
     interval = u.config.decay_interval_hours * 3600
@@ -54,6 +76,15 @@ async def _decay_loop():
             _logger.info("Background tier rebalance completed: %s", summary)
         except Exception:
             _logger.exception("Background tier rebalance failed")
+
+        if u.config.evolution_enabled and server_state.evolution_engine:
+            try:
+                evo_result = server_state.evolution_engine.run_evolution_cycle()
+                if evo_result.get("crystallized") or evo_result.get("recrystallized"):
+                    _logger.info("Background evolution completed: %s", evo_result)
+            except Exception:
+                _logger.exception("Background evolution cycle failed")
+
         if u.config.consolidate_enabled:
             try:
                 result = u.memory_service.consolidate_memories()

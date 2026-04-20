@@ -83,6 +83,9 @@ const en: Dict = {
     openModelScope: 'Open on ModelScope',
     noDescription: 'No description',
     idLabel: 'ID',
+    skillMd: 'SKILL.md',
+    loadingSkillMd: 'Loading SKILL.md…',
+    skillMdUnavailable: 'Could not load SKILL.md from the server',
   },
   leaderboard: {
     pageLoading: 'Loading leaderboard...',
@@ -316,6 +319,9 @@ const zh: Dict = {
     openModelScope: '在 ModelScope 打开',
     noDescription: '无描述',
     idLabel: 'ID',
+    skillMd: 'SKILL.md',
+    loadingSkillMd: '正在加载 SKILL.md…',
+    skillMdUnavailable: '无法从服务器加载 SKILL.md',
   },
   leaderboard: {
     pageLoading: '加载排行榜…',
