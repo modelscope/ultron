@@ -98,7 +98,10 @@ stats = ultron.get_memory_stats() -> dict
 
 ### ingest
 
-Unified ingestion: routes by file type (`.jsonl` → incremental extract, others → LLM extract). Accepts a mix of files and directories.
+Unified ingestion: routes by file type automatically. Accepts a mix of files and directories.
+
+- **`.jsonl` (default `Ultron`)**: The system first stores session metadata, then runs **LLM task segmentation** to split conversations into independent task segments and uses **content fingerprints** for incremental deduplication into `task_segments`. The background job stores trajectory metrics per segment, then uploads memories only from metric-eligible segments. The main LLM does **not** extract memories during `ingest`. Pass **`agent_id`** so incremental progress is tracked per session file.
+- **Other files**: LLM text extraction, then direct upload to the memory store.
 
 ```python
 result = ultron.ingest(
@@ -106,6 +109,8 @@ result = ultron.ingest(
     agent_id: str = "",
 ) -> dict
 ```
+
+For trajectory statistics and **SFT export**, use `ultron.trajectory_service`. `export_sft()` exports **segmented independent task segments** (each segment is a complete multi-turn conversation), filterable by `task_type` and `min_quality_score` (defaults to `trajectory_sft_score_threshold`, same **0–1** scale as `summary.overall_score` in `quality_metrics`). E.g. `get_trajectory_stats()`, `export_sft(task_type=..., min_quality_score=0.8, limit=...)`. See [Trajectory Hub](../Components/TrajectoryHub.md).
 
 ### ingest_text
 
@@ -129,19 +134,9 @@ Reassign HOT/WARM/COLD by `hit_count` percentiles and archive expired COLD memor
 summary = ultron.run_tier_rebalance() -> dict
 ```
 
-### run_memory_decay
-
-Alias of `run_tier_rebalance` (backward compatible).
-
-```python
-summary = ultron.run_memory_decay() -> dict
-```
-
----
-
 ## Raw uploads archive (`raw_user_uploads`)
 
-When `archive_raw_uploads` is enabled: `ingest(paths)` writes one row per ingested file (`ingest_file`); only **`ingest_text`** / HTTP plain-text ingest (no `source_file`) writes one UTF-8 row (`ingest_text`); **LLM extract after reading from file does not duplicate body text** (already covered by `ingest_file`). `upload_skill` writes one row per file in the pack (`skill_upload_file`).
+Raw archive (always when DB exists): `ingest(paths)` writes one row per ingested `.jsonl` (`ingest_file`); **`ingest_text`** / HTTP plain-text ingest (no `source_file`) writes one UTF-8 row (`ingest_text`). `upload_skill` writes one row per file in the pack (`skill_upload_file`).
 
 ### get_raw_user_upload
 
@@ -275,7 +270,7 @@ skills = ultron.list_all_skills() -> List[dict]
 
 ### Skill evolution and clusters
 
-For **server operators**: crystallization and re-crystallization run in the server `_decay_loop`; there is **no** public HTTP API. In the **same process** as `Ultron` with the same `data_dir` / database, troubleshoot or inspect via the SQLite `Database` on `ultron.db`:
+For **server operators**: crystallization and re-crystallization run in the same cadence as the background `run_decay_loop` in `ultron/services/background.py` (trajectory, tier rebalance, etc.); there is **no** public HTTP API. In the **same process** as `Ultron` with the same `data_dir` / database, troubleshoot or inspect via the SQLite `Database` on `ultron.db`:
 
 ```python
 clusters = ultron.db.get_all_clusters()
@@ -493,9 +488,8 @@ from ultron import (
 
     # Services
     IntentAnalyzer,
-    ConversationExtractor,
     LLMService,
     LLMOrchestrator,
-    SmartIngestionService,
+    IngestionService,
 )
 ```

@@ -6,46 +6,61 @@ description: "Ultron Memory Hub: unified ingestion, storage, and clustering"
 
 # Memory Hub
 
-Memory Hub is Ultron’s unified entry point for the memory layer. It integrates three sub-services:
+Memory Hub is Ultron's unified entry point for the memory layer. It brings together three sub-services and works with the **trajectory layer (Trajectory Hub)**: `.jsonl` sessions can land in the trajectory table first, then be **task-segmented** and metric-scored before reaching memory (see [Trajectory Hub](TrajectoryHub.md)).
 
 | Sub-service | Responsibility |
 |-------------|----------------|
-| **Smart Ingestion** | ETL pipeline: files / text → structured memories |
-| **Memory Service** | Core storage engine: deduplication, tiers, semantic retrieval, redaction |
-| **Knowledge Cluster** | Semantic clustering: groups related memories as input for skill crystallization in Skill Hub |
+| **Ingestion Service** | ETL: conversation `.jsonl` via `ingest(paths)` → LLM task segmentation → task_segments (fingerprint dedup); **`ingest_text`** (no file path) → main LLM extracts memories directly |
+| **Memory Service** | Core engine: deduplication, tiers, semantic retrieval, redaction |
+| **Knowledge Cluster** | Semantic clustering of related memories as input for skill crystallization |
 
-Data flow:
+Data flow (overview):
 
 ```
-Raw content (files / text / sessions)
+Raw input (session .jsonl paths or plain text for ingest_text)
     │
     ▼
-Smart Ingestion — LLM extracts structured memories
+Ingestion Service
+ ├─ Session .jsonl (ingest(paths)) → LLM task segmentation → task_segments (fingerprint dedup)
+ │       → scheduled job: ms-agent trajectory metrics → eligible segments → upload_memory
+ └─ ingest_text (plain text, no file path) → LLM structured extraction → direct upload
     │
     ▼
-Memory Service — dedup, embedding, storage, tier management
+Memory Service — dedup, embedding, storage, tiering
     │
     ▼
-Knowledge Cluster — cluster by semantic similarity; feeds Skill Hub crystallization
+Knowledge Cluster — semantic similarity; feeds Skill Hub crystallization
 ```
 
 ---
 
-## Smart Ingestion
+## Ingestion Service
 
-Unified knowledge-extraction pipeline. Pass file or directory paths, or raw text; routing is automatic by type: `.jsonl` uses ConversationExtractor (incremental); everything else uses LLM text extraction.
+There are **two** ingestion entry points; do not confuse them:
+
+**`ingest(paths)` (path list: conversation `.jsonl` files, or directories containing multiple `.jsonl` files)**
+
+The typical format is **conversation `.jsonl`**: one JSON object per line with `role` and `content`. You can pass multiple files and directories; directories are expanded recursively and **only `.jsonl` files are collected** (other extensions are skipped). For each file, the system first stores session metadata, then runs **LLM task segmentation** to split the conversation into independent task segments and uses **content fingerprints** for incremental deduplication into **`task_segments`**. The main LLM does **not** extract memories during this request; trajectory metric analysis and `upload_memory` run in the background job at segment granularity. To ingest ordinary plain text as memories, use **`ingest_text`** below.
+
+**`ingest_text(text)` (a single string)**
+
+**Always** uses the main LLM to extract text and `upload_memory` directly; it does **not** write `trajectory_records` and does **not** go through the trajectory quality pipeline, regardless of prior `ingest` or `.jsonl` uploads.
+
+If you construct `IngestionService` yourself, you **must** inject **`trajectory_service`** for `.jsonl`; otherwise ingestion fails.
 
 ### Core capabilities
 
 | Capability | Description |
 |------------|-------------|
-| **Unified ingest** | Single `ingest(paths)` entry; routing by file extension |
-| **Text ingest** | Raw text directly |
-| **Session extract** | `.jsonl` files use incremental extraction automatically |
-| **Directory expansion** | Directory paths recurse into all regular files (skips hidden path segments and symlinks) |
+| **Unified ingest** | Single `ingest(paths)` entry; primary path is session `.jsonl` → LLM task segmentation → task_segments |
+| **Text ingest** | `ingest_text` takes a string only; main LLM uploads memories, no trajectory table |
+| **Task segmentation** | `.jsonl` files are automatically split into independent task segments, metric-scored and extracted per segment |
+| **Fingerprint dedup** | Content fingerprint (SHA-256) for incremental tracking, avoiding duplicate processing |
+| **Sessions / trajectories** | `.jsonl` goes to task_segments and the trajectory metrics pipeline; `trajectory_service` required |
+| **Directory expansion** | Directories recurse and collect **`.jsonl` only** (skips hidden path segments and symlinks) |
 | **Type detection** | Memory type inferred automatically |
 | **Dedup** | Merges with existing memories automatically |
-| **Raw archive** | When `archive_raw_uploads` is enabled: `ingest(paths)` records one `ingest_file` row per file; plain `ingest_text` (not read from a file) records one `ingest_text` row; when text is read from a file then extracted, only file bytes are archived, not duplicate decoded body text |
+| **Raw archive** | When a database exists, archiving is always on: one `ingest_file` row per `.jsonl` from `ingest(paths)`; one `ingest_text` row per standalone `ingest_text` |
 
 ### Examples
 
@@ -54,17 +69,20 @@ from ultron import Ultron
 
 ultron = Ultron()
 
-# Unified ingest (mixed paths: regular files + .jsonl + directories)
+# Unified ingest: session exports (multiple files or dirs; conversation .jsonl)
 result = ultron.ingest(
-    paths=["/path/to/debug_log.txt", "/path/to/sessions/"],
+    paths=["/path/to/sessions/run-20250419.jsonl", "/path/to/sessions/"],
+    agent_id="my-agent",
 )
 
 print(f"Files processed: {result['total_files']}")
 print(f"Total memories: {result['total_memories']}")
 ```
 
+When **only `.jsonl`** land in trajectories, `total_memories` counts **new segment rows** (`new_segments`); memories are written later by the scheduled job.
+
 ```python
-# Text ingest
+# Text ingest (no file path: direct extraction, no trajectory table)
 result = ultron.ingest_text(
     text="""
     Investigation:
@@ -84,31 +102,37 @@ for mem in result.get("memories", []):
 ```
 Input path list
     ↓
-Recursively expand files under directories
+Recursively expand directories
     ↓
-For each file: archive raw bytes to raw_user_uploads
+Per file: archive raw bytes to raw_user_uploads
  (skip files over 10 MB; archive failure does not block ingestion)
     ↓
-Route by extension
- ├─ .jsonl → ConversationExtractor (incremental)
- └─ other  → LLM text extraction
+Each `.jsonl` file
+    → LLM task segmentation → independent task segments (fingerprint dedup)
+    → Also writes trajectory_records as session metadata
     ↓
-Upload to Memory Service (dedup, tier promotion)
+Memory Service (dedup, promotion); metric-eligible segments upload via scheduled job
     ↓
-Assign to Knowledge Cluster (semantic clustering)
+Knowledge Cluster (semantic clustering)
     ↓
 Aggregate results
 ```
 
-### Incremental session handling
+### Incremental sessions and task segmentation
 
-1. The server tracks the last processed line count per file path
-2. Each run processes only new lines
-3. `session_extract_overlap_lines` can prepend prior lines for continuity before new content
+**`.jsonl`**: the server runs **LLM task segmentation** on each file, splitting the conversation into independent task segments. Each segment has a **SHA-256 content fingerprint** (16 hex chars). When re-uploading the same file:
+- Fingerprint matches → skip (idempotent)
+- Fingerprint does not match → archive old segment's memories (precise tag-based archival), re-process
+
+Files at different paths are treated as different sessions — **no cross-file deduplication**. See [Trajectory Hub](TrajectoryHub.md).
+
+### Scheduled job and tier rebalance
+
+The background `run_decay_loop` in `ultron/services/background.py` (started from `server.py` lifespan) runs **before** tier rebalance, in order: **task segmentation** → **segment metric labeling** → **extract memories from eligible segments** (`TrajectoryMemoryExtractor`) → `run_tier_rebalance` → skill evolution → consolidation (if enabled). Therefore memories originating from `.jsonl` may appear one `decay_interval_hours` cycle later than the ingest request.
 
 ### LLM extraction
 
-Default model: `qwen3.6-flash`. It extracts reusable experience such as:
+Default model `qwen3.6-flash`. Extracts reusable experience such as:
 
 - Errors and resolutions
 - Security-related items
@@ -137,7 +161,6 @@ Output shape:
 |---------|---------|
 | `llm_max_input_tokens` | Maximum input tokens |
 | `llm_prompt_reserve_tokens` | Tokens reserved for the model reply |
-| `conversation_extract_window_tokens` | Session chunk window size |
 
 Long content is truncated or split automatically.
 
@@ -155,7 +178,7 @@ Core storage engine for multi-agent shared memory: upload, deduplication, percen
 | **WARM** | Medium hit rate (next M%) | Returned when context matches |
 | **COLD** | Low hit rate (remainder) | Still searched by default, ranked lower (tier boost 0.8 plus time decay) |
 
-Tiers are reassigned in bulk by **`run_tier_rebalance`** (background task on interval `decay_interval_hours`):
+Tiers are reassigned in bulk by **`run_tier_rebalance`** on interval `decay_interval_hours`, in the **same** background loop **after** trajectory labeling and uploading memories from good trajectories:
 
 1. Sort all active memories by `hit_count` DESC, then `last_hit_at` DESC
 2. Top `hot_percentile`% (default 10%) → HOT
@@ -241,7 +264,7 @@ Entry point: `MemoryService.upload_memory`; completion when a near duplicate mat
 **On hit**:
 
 1. Logging + stats: `increment_memory_hit`; original text stored in **`memory_contributions`**
-2. Merge body: LLM merge if `llm_service` is available; otherwise rule merge (keep longer substring, else join with `---`)
+2. Merge body: LLM semantic merge; if LLM is unavailable or the call fails, **skip the merge** (keep original text unchanged) and retry on the next duplicate upload when the LLM recovers
 3. Write back: if body text changed → recompute embedding and regenerate L0/L1; if only tags changed → update tags only
 
 **On miss**: New MemoryRecord (WARM, `active`).
@@ -351,7 +374,7 @@ KnowledgeCluster:
 
 ```
 POST /ingest
-{"paths": ["/path/to/file.txt", "/path/to/sessions/"]}
+{"paths": ["/path/to/sessions/run.jsonl", "/path/to/sessions/"], "agent_id": "my-agent"}
 
 POST /ingest/text
 {"text": "Raw text content..."}
@@ -373,7 +396,7 @@ POST /memories/details
 ## Dependencies
 
 1. **DashScope API key**: environment variable `DASHSCOPE_API_KEY`
-2. **LLM available**: default `qwen3.6-flash` (ingestion extraction and memory merge)
+2. **LLM availability**: default `qwen3.6-flash` for non-jsonl ingestion extraction (e.g. `ingest_text`), memory merge, etc.; task segmentation and the trajectory metric model use configured LLM services; see [Configuration](Config.md) and [Trajectory Hub](TrajectoryHub.md)
 3. **Embedding service**: used for semantic retrieval and clustering
 
-If the LLM is unavailable, ingestion falls back to rule-based memory-type inference, and merge falls back to rule-based concatenation.
+If the main LLM is unavailable, non-jsonl ingestion may fail or be limited. If the trajectory metric model is unavailable, segment metric analysis is **skipped** and segments stay unlabeled until it recovers.

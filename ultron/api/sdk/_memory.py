@@ -66,10 +66,6 @@ class MemoryMixin:
         """
         return self.memory_service.run_tier_rebalance()
 
-    def run_memory_decay(self) -> dict:
-        """Alias for run_tier_rebalance (backward compatibility)."""
-        return self.run_tier_rebalance()
-
     def get_memory_stats(self) -> dict:
         """Return aggregate memory counts (totals and breakdown by tier, type, and status)."""
         return self.memory_service.get_memory_stats()
@@ -80,19 +76,19 @@ class MemoryMixin:
         agent_id: str = "",
     ) -> dict:
         """
-        Unified ingestion: accepts file/directory paths, auto-dispatches by type.
+        Unified ingestion: accepts .jsonl file/directory paths.
 
-        ``.jsonl`` files go through ConversationExtractor (incremental),
-        other supported files go through LLM text extraction.
-        Directories are expanded recursively to all nested files (hidden path segments skipped).
+        ``.jsonl`` files require ``trajectory_service`` and append to ``trajectory_records``
+        (see Trajectory Hub). Use ``ingest_text`` for plain text. Directories are expanded
+        recursively to nested ``.jsonl`` files (hidden path segments skipped).
         """
-        return self.smart_ingestion.ingest(paths=paths, agent_id=agent_id)
+        return self.ingestion_service.ingest(paths=paths, agent_id=agent_id)
 
     def ingest_text(
         self,
         text: str,
     ) -> dict:
         """Ingest plain text; the LLM extracts candidate memories."""
-        return self.smart_ingestion.ingest_text(
+        return self.ingestion_service.ingest_text(
             text=text,
         )

@@ -1,7 +1,7 @@
 .. Ultron documentation (English)
 
-ULTRON documentation
-====================
+ULTRON (奥创) documentation
+===========================
 
 .. toctree::
    :maxdepth: 2
@@ -17,6 +17,7 @@ ULTRON documentation
 
    Components/Config
    Components/MemoryHub
+   Components/TrajectoryHub
    Components/SkillHub
    Components/HarnessHub
 

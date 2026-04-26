@@ -11,8 +11,6 @@ _SHOWCASE_BY_LANG = {
     "zh": _REPO_ROOT / "docs" / "zh" / "Showcase",
     "en": _REPO_ROOT / "docs" / "en" / "Showcase",
 }
-# Legacy flat dir (docs/showcase/*.md and *.en.md); fills gaps if locale dirs omit a language.
-_LEGACY_SHOWCASE_DIR = _REPO_ROOT / "docs" / "showcase"
 
 
 def _parse_frontmatter(text: str) -> tuple:
@@ -40,13 +38,11 @@ def _slugify(name: str) -> str:
 class ShowcaseService:
     """Loads showcase Markdown from docs/zh/Showcase/ and docs/en/Showcase/.
 
-    Each locale directory holds ``{slug}.md``. Falls back to legacy ``docs/showcase/``
-    (``{slug}.md`` = zh, ``{slug}.en.md`` = en) if those folders are empty or missing.
+    Each locale directory holds ``{slug}.md``.
     """
 
     def __init__(self, showcase_dirs: Optional[Dict[str, Path]] = None):
         self._dirs = showcase_dirs or dict(_SHOWCASE_BY_LANG)
-        self._legacy_dir = _LEGACY_SHOWCASE_DIR
         self._cache: Dict[str, dict] = {}  # key: "slug:lang"
         self._slugs: set = set()
         self._loaded = False
@@ -91,29 +87,6 @@ class ShowcaseService:
             count += 1
         return count
 
-    def _load_legacy_dir(self) -> int:
-        if not self._legacy_dir.is_dir():
-            return 0
-        count = 0
-        for md_file in sorted(self._legacy_dir.glob("*.md")):
-            stem = md_file.stem
-            if stem.endswith(".en"):
-                slug = stem[:-3]
-                lang = "en"
-            else:
-                slug = stem
-                lang = "zh"
-            if self._cache.get(f"{slug}:{lang}"):
-                continue
-            entry = self._parse_file(md_file)
-            if not entry:
-                continue
-            entry["slug"] = slug
-            self._cache[f"{slug}:{lang}"] = entry
-            self._slugs.add(slug)
-            count += 1
-        return count
-
     def load(self):
         self._cache.clear()
         self._slugs.clear()
@@ -125,12 +98,9 @@ class ShowcaseService:
                 logger.debug("Showcase loaded %d files from %s", n, dir_path)
         if not loaded_any:
             logger.warning("No showcase files under docs/zh/Showcase or docs/en/Showcase")
-        legacy_n = self._load_legacy_dir()
-        if legacy_n:
-            logger.info("Loaded %d showcase entries from legacy docs/showcase", legacy_n)
         self._loaded = True
         if not self._cache:
-            logger.warning("No showcase content loaded (check docs/zh/Showcase, docs/en/Showcase, or docs/showcase)")
+            logger.warning("No showcase content loaded (check docs/zh/Showcase or docs/en/Showcase)")
         else:
             logger.info("Showcase entries: %d (unique slugs: %d)", len(self._cache), len(self._slugs))
 

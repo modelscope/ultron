@@ -19,6 +19,7 @@ ULTRON (奥创) 文档
 
    Components/Config
    Components/MemoryHub
+   Components/TrajectoryHub
    Components/SkillHub
    Components/HarnessHub
 

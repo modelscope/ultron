@@ -232,7 +232,7 @@ EvolutionRecord:
 
 ### Background execution
 
-Evolution does not use a separate timer. `run_evolution_cycle()` runs on the same cadence as `_decay_loop` (right after tier rebalance), with interval `decay_interval_hours`. Each cycle has two phases sharing one batch cap (default 3):
+Evolution does not use a separate timer. `run_evolution_cycle()` runs on the same cadence as `run_decay_loop` in `ultron/services/background.py` (right after tier rebalance), with interval `decay_interval_hours`. Each cycle has two phases sharing one batch cap (default 3):
 
 | Phase | Workload | Priority |
 |-------|----------|----------|

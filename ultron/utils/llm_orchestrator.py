@@ -65,10 +65,14 @@ class LLMOrchestrator:
     """LLM-driven business operations: memory extraction, merging, classification, skill evolution."""
 
     def __init__(
-        self, llm_service: LLMService, classify_llm_service: Optional[LLMService] = None
+        self,
+        llm_service: LLMService,
+        classify_llm_service: Optional[LLMService] = None,
+        quality_llm_service: Optional[LLMService] = None,
     ):
         self.llm = llm_service
         self.classify_llm = classify_llm_service or llm_service
+        self.quality_llm = quality_llm_service
 
     def prepare_conversation_text_for_memory_extraction(
         self,
@@ -92,6 +96,16 @@ class LLMOrchestrator:
         return join_messages_lines_within_token_budget(
             messages, max_toks, self.llm._count_tokens
         )
+
+    def segment_conversation_tasks(
+        self, messages: List[dict]
+    ) -> Optional[List[dict]]:
+        """Split a conversation into distinct task segments using LLM windows."""
+        from ..services.trajectory.segmentation_llm import (
+            segment_conversation_tasks_with_llm,
+        )
+
+        return segment_conversation_tasks_with_llm(self.llm, messages)
 
     def extract_memories_from_text(self, text: str) -> List[dict]:
         """

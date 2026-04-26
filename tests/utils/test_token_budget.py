@@ -2,6 +2,7 @@
 import unittest
 
 from ultron.utils.token_budget import (
+    CONVERSATION_ROLES,
     join_messages_full_text,
     join_messages_lines_within_token_budget,
     split_messages_into_token_windows,
@@ -73,13 +74,13 @@ class TestJoinMessages(unittest.TestCase):
         s = join_messages_lines_within_token_budget(msgs, 12, _char_tokens)
         self.assertLessEqual(_char_tokens(s), 12)
 
-    def test_join_full_skips_system_role(self):
+    def test_join_full_includes_system_role(self):
         msgs = [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hi"},
         ]
         s = join_messages_full_text(msgs)
-        self.assertNotIn("[system]:", s)
+        self.assertIn("[system]: sys", s)
         self.assertIn("[user]: hi", s)
 
     def test_join_full_skips_empty_content(self):
@@ -138,14 +139,26 @@ class TestSplitWindows(unittest.TestCase):
         chunks = split_messages_into_token_windows([], 100, _char_tokens)
         self.assertEqual(chunks, [])
 
-    def test_skips_system_messages(self):
+    def test_includes_system_messages_in_windows(self):
         msgs = [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hi"},
         ]
         chunks = split_messages_into_token_windows(msgs, 100, _char_tokens)
         self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0][0]["role"], "user")
+        self.assertEqual(len(chunks[0]), 2)
+        self.assertEqual(chunks[0][0]["role"], "system")
+        self.assertEqual(chunks[0][1]["role"], "user")
+
+    def test_legacy_user_assistant_only_roles_param(self):
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+        ]
+        s = join_messages_full_text(msgs, roles=("user", "assistant"))
+        self.assertNotIn("[system]:", s)
+        self.assertIn("[user]: hi", s)
+        self.assertEqual(CONVERSATION_ROLES[-1], "system")
 
     def test_very_long_single_message_truncated(self):
         msgs = [{"role": "user", "content": "x" * 1000}]

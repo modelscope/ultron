@@ -12,6 +12,7 @@ from .core.models import (
     SkillMeta,
     SkillFrontmatter,
     SkillUsageRecord,
+    TrajectoryRecord,
     SourceType,
     Complexity,
     MemoryRecord,
@@ -21,11 +22,12 @@ from .core.models import (
 )
 
 from .services.skill import RetrievalQuery, RetrievalResult
-from .services.memory import ConversationExtractor, MemorySearchResult
+from .services.memory import MemorySearchResult
 from .utils.intent_analyzer import IntentAnalyzer
 from .core.llm_service import LLMService
 from .utils.llm_orchestrator import LLMOrchestrator
-from .services.smart_ingestion import SmartIngestionService
+from .services.ingestion import IngestionService
+from .services.trajectory import TrajectoryService
 
 __all__ = [
     "Ultron",
@@ -36,6 +38,7 @@ __all__ = [
     "SkillMeta",
     "SkillFrontmatter",
     "SkillUsageRecord",
+    "TrajectoryRecord",
     "SourceType",
     "Complexity",
     "MemoryRecord",
@@ -46,8 +49,8 @@ __all__ = [
     "RetrievalResult",
     "MemorySearchResult",
     "IntentAnalyzer",
-    "ConversationExtractor",
     "LLMService",
     "LLMOrchestrator",
-    "SmartIngestionService",
+    "IngestionService",
+    "TrajectoryService",
 ]

@@ -281,12 +281,72 @@ class UltronConfig:
         )
     )
 
-    # Persist file bytes (ingest paths + skill package trees) into raw_user_uploads when True
-    archive_raw_uploads: bool = field(
+    # Trajectory metric model and thresholds
+    quality_llm_provider: str = field(
+        default_factory=lambda: os.environ.get("ULTRON_QUALITY_LLM_PROVIDER", "dashscope")
+    )
+    quality_llm_model: str = field(
+        default_factory=lambda: os.environ.get("ULTRON_QUALITY_LLM_MODEL", "qwen3.6-plus")
+    )
+    quality_llm_base_url: str = field(
         default_factory=lambda: (
-            os.environ.get("ULTRON_ARCHIVE_RAW_UPLOADS", "1").lower()
-            not in ("0", "false", "no", "off")
-        ),
+            os.environ.get("ULTRON_QUALITY_LLM_BASE_URL", "").strip()
+            or os.environ.get("ULTRON_BASE_URL", "").strip()
+            or os.environ.get(
+                "ULTRON_LLM_BASE_URL",
+                os.environ.get(
+                    "ULTRON_LLM_API_URL",
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                ),
+            ).strip()
+        )
+    )
+    quality_llm_api_key: str = field(
+        default_factory=lambda: os.environ.get("ULTRON_QUALITY_LLM_API_KEY", "").strip()
+    )
+    trajectory_memory_score_threshold: float = field(
+        default_factory=lambda: max(
+            0.0,
+            min(1.0, float(os.environ.get("ULTRON_TRAJECTORY_MEMORY_SCORE_THRESHOLD", "0.7"))),
+        )
+    )
+    trajectory_sft_score_threshold: float = field(
+        default_factory=lambda: max(
+            0.0,
+            min(1.0, float(os.environ.get("ULTRON_TRAJECTORY_SFT_SCORE_THRESHOLD", "0.8"))),
+        )
+    )
+
+    # Server-side self-training
+    sft_enabled: bool = field(
+        default_factory=lambda: _env_bool("ULTRON_SFT_ENABLED", False),
+    )
+    sft_trigger_threshold: int = field(
+        default_factory=lambda: max(1, int(os.environ.get("ULTRON_SFT_TRIGGER_THRESHOLD", "100")))
+    )
+    sft_base_model: str = field(
+        default_factory=lambda: os.environ.get("ULTRON_SFT_BASE_MODEL", "Qwen/Qwen3-8B")
+    )
+    sft_base_url: str = field(
+        default_factory=lambda: os.environ.get("ULTRON_SFT_BASE_URL", "https://tinker.modelscope.cn")
+    )
+    sft_epochs: int = field(
+        default_factory=lambda: max(1, int(os.environ.get("ULTRON_SFT_EPOCHS", "1")))
+    )
+    sft_batch_size: int = field(
+        default_factory=lambda: max(1, int(os.environ.get("ULTRON_SFT_BATCH_SIZE", "1")))
+    )
+    sft_learning_rate: float = field(
+        default_factory=lambda: max(0.0, float(os.environ.get("ULTRON_SFT_LEARNING_RATE", "1e-5")))
+    )
+    sft_lora_rank: int = field(
+        default_factory=lambda: max(1, int(os.environ.get("ULTRON_SFT_LORA_RANK", "8")))
+    )
+    sft_max_length: int = field(
+        default_factory=lambda: max(512, int(os.environ.get("ULTRON_SFT_MAX_LENGTH", "8192")))
+    )
+    sft_system_prompt: str = field(
+        default_factory=lambda: os.environ.get("ULTRON_SFT_SYSTEM_PROMPT", "")
     )
 
     # --- Skill evolution (cluster crystallization) ---
@@ -340,6 +400,10 @@ class UltronConfig:
     def models_dir(self) -> Path:
         return Path(self.data_dir) / "models"
 
+    @property
+    def sft_dir(self) -> Path:
+        return Path(self.data_dir) / "sft"
+
     def ensure_directories(self) -> None:
         """Create ``data_dir``, ``skills_dir``, ``archive_dir``, and ``models_dir`` if missing."""
         for dir_path in [
@@ -347,6 +411,7 @@ class UltronConfig:
             self.skills_dir,
             self.archive_dir,
             self.models_dir,
+            self.sft_dir,
         ]:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
 

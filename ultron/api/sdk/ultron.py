@@ -9,12 +9,13 @@ from ...core.embeddings import EmbeddingService
 from ...core.llm_service import LLMService
 from ...core.storage import SkillStorage
 from ...services.harness import HarnessService
-from ...services.memory import ConversationExtractor, MemoryService
+from ...services.memory import MemoryService
 from ...services.skill import (
     SkillCatalogService,
     SkillRetriever,
 )
-from ...services.smart_ingestion import SmartIngestionService
+from ...services.ingestion import IngestionService
+from ...services.trajectory import TrajectoryService
 from ...utils.llm_orchestrator import LLMOrchestrator
 from ...utils.sanitizer import DataSanitizer
 from ...utils.skill_parser import SkillParser
@@ -96,9 +97,23 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
             max_retries=self.config.llm_max_retries,
             retry_base_delay_seconds=self.config.llm_retry_base_delay_seconds,
         )
+        q_key = self.config.quality_llm_api_key or self.config.llm_api_key
+        self.quality_llm_service = LLMService(
+            provider=self.config.quality_llm_provider,
+            model=self.config.quality_llm_model,
+            base_url=self.config.quality_llm_base_url,
+            api_key=q_key,
+            max_input_tokens=self.config.llm_max_input_tokens,
+            prompt_reserve_tokens=self.config.llm_prompt_reserve_tokens,
+            tiktoken_encoding=self.config.llm_token_count_encoding,
+            request_timeout_seconds=self.config.llm_request_timeout_seconds,
+            max_retries=self.config.llm_max_retries,
+            retry_base_delay_seconds=self.config.llm_retry_base_delay_seconds,
+        )
         self.llm_orchestrator = LLMOrchestrator(
             self.llm_service,
             classify_llm_service=self.memory_category_llm_service,
+            quality_llm_service=self.quality_llm_service,
         )
 
         self.catalog = SkillCatalogService(self.db, self.config)
@@ -120,20 +135,20 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
             llm_service=self.llm_service,
         )
 
-        self.conversation_extractor = ConversationExtractor(
-            memory_service=self.memory_service,
+        self.trajectory_service = TrajectoryService(
+            db=self.db,
             llm_orchestrator=self.llm_orchestrator,
-            database=self.db,
+            memory_service=self.memory_service,
             config=self.config,
         )
 
-        self.smart_ingestion = SmartIngestionService(
+        self.ingestion_service = IngestionService(
             memory_service=self.memory_service,
             llm_service=self.llm_service,
             llm_orchestrator=self.llm_orchestrator,
             config=self.config,
-            conversation_extractor=self.conversation_extractor,
             database=self.db,
+            trajectory_service=self.trajectory_service,
         )
 
         self.harness = HarnessService(self.db)

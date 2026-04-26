@@ -225,12 +225,17 @@ GET /memory/stats
 ```
 POST /ingest
 {
-    "paths": ["/path/to/file.txt", "/path/to/sessions/"]
+    "paths": ["/path/to/file.txt", "/path/to/sessions/"],
+    "agent_id": "your-agent-or-terminal-id"
 }
 ```
 
+- **`agent_id`**：对 **`.jsonl`** 轨迹摄取为**必填**（用于按文件维度的增量指纹追踪）；其它类型可传空字符串。
+- **`.jsonl`**：在默认服务配置下，先通过 **LLM 任务分割** 将对话拆分为独立 task segment，按 **内容指纹** 做增量去重写入 `task_segments`；记忆在后台定时任务中从满足指标阈值的 segment 写入；**不**在单次请求内完成主 LLM 记忆提取。
 - `**success**`：`data.successful > 0` 时为 `true。`
-- `**data**`：智能摄取服务的原始结果字典（含路径处理、成功条数等，结构以运行时为准）。
+- `**data**`：智能摄取服务的原始结果字典（含路径处理、成功条数等；`.jsonl` 可能含 `new_segments`、`superseded_segments` 等字段，结构以运行时为准）。
+
+详见 [轨迹中心](../Components/TrajectoryHub.md)。
 
 ### 文本摄取
 

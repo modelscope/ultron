@@ -307,6 +307,60 @@ class SkillUsageRecord:
         )
 
 
+@dataclass
+class TrajectoryRecord:
+    """One user/assistant trajectory row with optional metric analysis.
+
+    ``quality_score`` and ``task_type`` on the object may be empty; the canonical
+    source is ``quality_metrics`` JSON. ``to_dict`` derives score and type from
+    ``quality_metrics`` when present.
+    """
+    id: str
+    task_text: str
+    response_text: str
+    success: bool
+    latency_ms: Optional[int]
+    quality_metrics: str
+    quality_score: Optional[float]
+    memory_extracted: bool
+    task_type: str
+    source_agent_id: str
+    tool_call_count: int
+    response_length: int
+    labeled: bool
+    created_at: datetime
+
+    def to_dict(self) -> dict:
+        from .quality_json import (
+            overall_score_unit_from_assessment,
+            parse_segment_quality_json,
+            task_type_from_assessment,
+        )
+
+        a = parse_segment_quality_json({"quality_metrics": self.quality_metrics})
+        if a:
+            qscore = overall_score_unit_from_assessment(a)
+            ttype = task_type_from_assessment(a)
+        else:
+            qscore = self.quality_score
+            ttype = self.task_type
+        return {
+            "id": self.id,
+            "task_text": self.task_text,
+            "response_text": self.response_text,
+            "success": self.success,
+            "latency_ms": self.latency_ms,
+            "quality_metrics": self.quality_metrics,
+            "quality_score": qscore,
+            "memory_extracted": self.memory_extracted,
+            "task_type": ttype,
+            "source_agent_id": self.source_agent_id,
+            "tool_call_count": self.tool_call_count,
+            "response_length": self.response_length,
+            "labeled": self.labeled,
+            "created_at": self.created_at.isoformat() if self.created_at else "",
+        }
+
 
 # ============ Memory models ============
 

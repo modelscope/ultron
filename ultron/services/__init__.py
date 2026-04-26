@@ -6,6 +6,7 @@ from .skill import (
     SkillCatalogService,
 )
 from .memory import MemoryService, MemorySearchResult
+from .ingestion import IngestionService
 from ..utils.llm_orchestrator import LLMOrchestrator
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "SkillCatalogService",
     "MemoryService",
     "MemorySearchResult",
+    "IngestionService",
     "LLMOrchestrator",
 ]
