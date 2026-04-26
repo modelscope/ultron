@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from ...services.smart_ingestion import MAX_FILE_SIZE
+from ...services.ingestion import MAX_FILE_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ class CoreMixin:
         """
         Persist each regular file under ``skill_dir`` into ``raw_user_uploads`` (raw bytes).
         """
-        if not self.config.archive_raw_uploads:
+        if not self.db:
             return
         root = Path(skill_dir).resolve()
         if not root.is_dir():

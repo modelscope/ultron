@@ -26,24 +26,24 @@ class TestUltronHelpers(unittest.TestCase):
 
 
 class TestUltronCoreArchive(unittest.TestCase):
-    """CoreMixin._archive_skill_tree with archive disabled."""
+    """CoreMixin._archive_skill_tree persists when db is set."""
 
-    def _make_ultron(self, archive=False):
+    def _make_ultron(self):
         u = object.__new__(Ultron)
         u.config = MagicMock()
-        u.config.archive_raw_uploads = archive
         u.db = MagicMock()
         return u
 
-    def test_archive_disabled_no_db_call(self):
-        u = self._make_ultron(archive=False)
+    def test_archive_without_db_no_call(self):
+        u = object.__new__(Ultron)
+        u.config = MagicMock()
+        u.db = None
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "SKILL.md").write_text("# skill")
             u._archive_skill_tree(tmp)
-            u.db.save_raw_user_upload.assert_not_called()
 
-    def test_archive_enabled_saves_files(self):
-        u = self._make_ultron(archive=True)
+    def test_archive_saves_files(self):
+        u = self._make_ultron()
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "SKILL.md").write_text("# skill")
             (Path(tmp) / "script.sh").write_text("echo hi")
@@ -51,7 +51,7 @@ class TestUltronCoreArchive(unittest.TestCase):
             self.assertGreater(u.db.save_raw_user_upload.call_count, 0)
 
     def test_archive_skips_hidden_files(self):
-        u = self._make_ultron(archive=True)
+        u = self._make_ultron()
         with tempfile.TemporaryDirectory() as tmp:
             hidden = Path(tmp) / ".hidden"
             hidden.mkdir()
@@ -64,7 +64,7 @@ class TestUltronCoreArchive(unittest.TestCase):
                 self.assertNotIn(".hidden", rel)
 
     def test_archive_nonexistent_dir_no_crash(self):
-        u = self._make_ultron(archive=True)
+        u = self._make_ultron()
         u._archive_skill_tree("/nonexistent/path")
         u.db.save_raw_user_upload.assert_not_called()
 
@@ -102,7 +102,7 @@ class TestUltronMemoryMixin(unittest.TestCase):
     def _make_ultron(self):
         u = object.__new__(Ultron)
         u.memory_service = MagicMock()
-        u.smart_ingestion = MagicMock()
+        u.ingestion_service = MagicMock()
         return u
 
     def test_upload_memory_delegates(self):
@@ -132,21 +132,15 @@ class TestUltronMemoryMixin(unittest.TestCase):
         result = u.run_tier_rebalance()
         self.assertEqual(result["hot"], 5)
 
-    def test_run_memory_decay_is_alias(self):
-        u = self._make_ultron()
-        u.memory_service.run_tier_rebalance.return_value = {"ok": True}
-        result = u.run_memory_decay()
-        self.assertTrue(result["ok"])
-
     def test_ingest_delegates(self):
         u = self._make_ultron()
-        u.smart_ingestion.ingest.return_value = {"total_files": 1}
+        u.ingestion_service.ingest.return_value = {"total_files": 1}
         u.ingest(["/tmp/x"], agent_id="agent1")
-        u.smart_ingestion.ingest.assert_called_once_with(paths=["/tmp/x"], agent_id="agent1")
+        u.ingestion_service.ingest.assert_called_once_with(paths=["/tmp/x"], agent_id="agent1")
 
     def test_ingest_text_delegates(self):
         u = self._make_ultron()
-        u.smart_ingestion.ingest_text.return_value = {"success": True}
+        u.ingestion_service.ingest_text.return_value = {"success": True}
         result = u.ingest_text("hello world")
         self.assertTrue(result["success"])
 
@@ -159,7 +153,6 @@ class TestUltronSkillMixin(unittest.TestCase):
         u.embedding = MagicMock()
         u.catalog = MagicMock()
         u.config = MagicMock()
-        u.config.archive_raw_uploads = False
         u.retriever = MagicMock()
         return u
 

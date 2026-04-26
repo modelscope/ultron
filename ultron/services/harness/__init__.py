@@ -90,38 +90,6 @@ class HarnessService:
     def get_share_by_code(self, short_code: str) -> Optional[dict]:
         return self.db.get_share_by_code(short_code)
 
-    # NOTE: import_share is deprecated — replaced by short-code curl|bash flow.
-    # def import_share(
-    #     self, token: str, target_user_id: str, target_agent_id: str, product: str = ""
-    # ) -> dict:
-    #     share = self.db.get_share(token)
-    #     if not share:
-    #         raise ValueError("Share token not found")
-    #     snapshot = share["snapshot"]
-    #     if isinstance(snapshot, str):
-    #         snapshot = json.loads(snapshot)
-    #     # Allow caller to override the product from the snapshot
-    #     resolved_product = product or snapshot.get("product", "nanobot")
-    #     incoming = snapshot.get("resources", {})
-    #
-    #     # Merge into existing profile: only ADD new files, never overwrite existing ones.
-    #     # This preserves user-composed content (e.g. memories, skills added via Compose).
-    #     existing = self.db.get_profile(target_user_id, target_agent_id)
-    #     if existing and existing.get("resources"):
-    #         merged = dict(existing["resources"])
-    #         for path, content in incoming.items():
-    #             if path not in merged:
-    #                 merged[path] = content
-    #     else:
-    #         merged = incoming
-    #
-    #     return self.sync_up(
-    #         target_user_id,
-    #         target_agent_id,
-    #         resolved_product,
-    #         merged,
-    #     )
-
     def get_profile(self, user_id: str, agent_id: str) -> Optional[dict]:
         return self.db.get_profile(user_id, agent_id)
 

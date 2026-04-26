@@ -1,6 +1,5 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 import asyncio
-import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -23,11 +22,11 @@ from ultron.services.harness.soul_presets import SoulPresetService
 from ultron.services.harness.showcase import ShowcaseService
 from ultron.services.skill.skill_cluster import KnowledgeClusterService
 from ultron.services.skill.skill_evolution import SkillEvolutionEngine
+from ultron.services.background import run_decay_loop
+from ultron.services.training.sft_trainer import SFTTrainerService
 
 embedding_queue = None
 _decay_task = None
-_logger = logging.getLogger("ultron.server")
-
 
 setup_logging(
     log_dir=os.path.join(os.path.expanduser("~/.ultron"), "logs"),
@@ -59,39 +58,12 @@ server_state.evolution_engine = SkillEvolutionEngine(
     catalog=_u.catalog,
 )
 
-
-async def _decay_loop():
-    """Periodic job: tier rebalance (HOT/WARM/COLD) then skill evolution on the same tick.
-
-    Schedule is ``decay_interval_hours`` only; there is no separate timer for evolution.
-    Consolidation runs after both when enabled.
-    """
-    u = server_state.ultron
-    assert u is not None
-    interval = u.config.decay_interval_hours * 3600
-    while True:
-        await asyncio.sleep(interval)
-        try:
-            summary = u.run_tier_rebalance()
-            _logger.info("Background tier rebalance completed: %s", summary)
-        except Exception:
-            _logger.exception("Background tier rebalance failed")
-
-        if u.config.evolution_enabled and server_state.evolution_engine:
-            try:
-                evo_result = server_state.evolution_engine.run_evolution_cycle()
-                if evo_result.get("crystallized") or evo_result.get("recrystallized"):
-                    _logger.info("Background evolution completed: %s", evo_result)
-            except Exception:
-                _logger.exception("Background evolution cycle failed")
-
-        if u.config.consolidate_enabled:
-            try:
-                result = u.memory_service.consolidate_memories()
-                if result["merges"] > 0:
-                    _logger.info("Background consolidation completed: %s", result)
-            except Exception:
-                _logger.exception("Background consolidation failed")
+server_state.trajectory_service = _u.trajectory_service
+server_state.sft_trainer = SFTTrainerService(
+    db=_u.db,
+    sft_exporter=_u.trajectory_service.sft_exporter,
+    config=_u.config,
+)
 
 
 @asynccontextmanager
@@ -108,7 +80,7 @@ async def lifespan(app):
             workers=u.config.embedding_queue_workers,
         )
         await embedding_queue.start()
-    _decay_task = asyncio.create_task(_decay_loop())
+    _decay_task = asyncio.create_task(run_decay_loop())
     yield
     _decay_task.cancel()
     if embedding_queue:

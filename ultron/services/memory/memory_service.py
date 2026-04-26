@@ -17,6 +17,7 @@ from ...utils.memory_type_infer import infer_memory_type
 from ...utils.token_budget import get_token_counter, truncate_text_to_token_limit
 from ...utils.intent_analyzer import IntentAnalyzer
 from ...core.logging import log_event
+from .consolidation import MemoryConsolidationMixin
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class MemorySearchResult:
         return result
 
 
-class MemoryService:
+class MemoryService(MemoryConsolidationMixin):
     """
     Shared memory management service for multi-agent collective learning.
 
@@ -474,277 +475,6 @@ class MemoryService:
         """Aggregate counts: total memories and breakdown by tier, type, and status."""
         return self.db.get_memory_stats()
 
-    # ============ Consolidation (chain-merge) ============
-
-    def consolidate_memories(
-        self, *, max_merges: Optional[int] = None, dry_run: bool = False
-    ) -> dict:
-        """Scan all active memories and merge near-duplicates that were missed at upload time.
-
-        Handles two scenarios:
-        1. Parallel uploads that raced past dedup detection.
-        2. Chain merges are handled across successive consolidation runs —
-           each run merges the current best pairs; the next run picks up any
-           new pairs created by embedding drift.
-
-        Pre-computes all candidate pairs in one batch (numpy), then processes
-        them greedily from highest to lowest similarity.
-
-        Args:
-            max_merges: Override ``consolidate_max_merges`` config for this run.
-            dry_run: If True, only report what would be merged without executing.
-
-        Returns a summary dict with merge count and details.
-        """
-        limit = (
-            max_merges if max_merges is not None else self.config.consolidate_max_merges
-        )
-        hard = self.config.dedup_similarity_threshold
-        soft = self.config.dedup_soft_threshold
-
-        logger.info(
-            "consolidation: start dry_run=%s max_merges=%d soft=%.3f hard=%.3f",
-            dry_run,
-            limit,
-            soft,
-            hard,
-        )
-        # Phase 1: find all candidate pairs in one shot
-        candidates = self._find_all_consolidation_pairs(soft)
-        if not candidates:
-            logger.info("consolidation: done (no candidate pairs above soft threshold)")
-            return {"merges": 0, "details": []}
-
-        logger.info(
-            "consolidation: phase1 done candidate_pairs=%d (phase2 merge cap=%d)",
-            len(candidates),
-            limit,
-        )
-
-        # Phase 2: greedily merge from highest similarity down
-        merged_ids: set = set()
-        total_merged = 0
-        merge_log: list = []
-        total_candidates = len(candidates)
-        _phase2_log_interval = max(1, min(100, total_candidates // 20 or 1))
-
-        for idx, (winner_dict, loser_dict, similarity) in enumerate(candidates, start=1):
-            if total_merged >= limit:
-                break
-            # Skip if either record was already consumed in this run
-            if winner_dict["id"] in merged_ids or loser_dict["id"] in merged_ids:
-                continue
-
-            if idx == 1 or idx % _phase2_log_interval == 0:
-                logger.info(
-                    "consolidation: phase2 scanning pair %d/%d merges_so_far=%d/%d",
-                    idx,
-                    total_candidates,
-                    total_merged,
-                    limit,
-                )
-
-            # In dry_run, only process hard matches (skip LLM calls)
-            if not dry_run and similarity < hard and self.llm_orchestrator is not None:
-                logger.info(
-                    "consolidation: phase2 LLM duplicate check pair=%d sim=%.3f",
-                    idx,
-                    similarity,
-                )
-                try:
-                    confirmed = self.llm_orchestrator.confirm_memory_duplicate(
-                        winner_dict.get("content", ""),
-                        winner_dict.get("context", ""),
-                        loser_dict.get("content", ""),
-                        loser_dict.get("context", ""),
-                    )
-                except Exception:
-                    confirmed = False
-                if not confirmed:
-                    continue
-            elif dry_run and similarity < hard:
-                # In dry_run, skip soft matches (would need LLM)
-                continue
-
-            if not dry_run:
-                self._execute_consolidation_merge(winner_dict, loser_dict)
-            merged_ids.add(loser_dict["id"])
-            total_merged += 1
-            logger.info(
-                "consolidation: phase2 merged %d/%d sim=%.4f dry_run=%s",
-                total_merged,
-                limit,
-                similarity,
-                dry_run,
-            )
-            merge_log.append(
-                {
-                    "winner": winner_dict["id"][:8],
-                    "loser": loser_dict["id"][:8],
-                    "similarity": round(similarity, 4),
-                    "winner_l0": (winner_dict.get("summary_l0") or "")[:60],
-                    "loser_l0": (loser_dict.get("summary_l0") or "")[:60],
-                }
-            )
-
-        if total_merged > 0:
-            log_event(
-                f"Consolidation done: {total_merged} merges",
-                action="consolidate_memories",
-                detail=json.dumps(merge_log, ensure_ascii=False),
-            )
-        logger.info(
-            "consolidation: finished merges=%d dry_run=%s (pairs_examined up to cap)",
-            total_merged,
-            dry_run,
-        )
-        return {
-            "merges": total_merged,
-            "details": merge_log,
-        }
-
-    def _find_all_consolidation_pairs(
-        self,
-        threshold: float,
-    ) -> List[tuple]:
-        """Find all pairs above threshold across all active memories (same type).
-
-        Uses numpy matrix multiplication for fast batch cosine similarity.
-        Returns a list of ``(winner_dict, loser_dict, similarity)`` sorted by
-        similarity descending.  The winner is the record with higher hit_count.
-        """
-        import numpy as np
-
-        all_pairs: list = []
-        phase1_t0 = time.perf_counter()
-
-        for mtype in (
-            "error",
-            "security",
-            "correction",
-            "pattern",
-            "preference",
-            "life",
-        ):
-            rows = self.db.get_memory_records_with_embeddings(memory_type=mtype)
-            n = len(rows)
-            if n < 2:
-                logger.info(
-                    "consolidation: phase1 type=%s skip embeddings=%d (need >=2)",
-                    mtype,
-                    n,
-                )
-                continue
-
-            logger.info(
-                "consolidation: phase1 type=%s computing similarity matrix n=%d",
-                mtype,
-                n,
-            )
-            t_type = time.perf_counter()
-            dicts = [r[0] for r in rows]
-            mat = np.array([r[1] for r in rows], dtype=np.float32)
-            norms = np.linalg.norm(mat, axis=1, keepdims=True)
-            norms = np.maximum(norms, 1e-10)
-            normed = mat / norms
-            sim_matrix = normed @ normed.T
-
-            # Only upper triangle (avoid duplicates and self-comparison)
-            np.fill_diagonal(sim_matrix, 0.0)
-            indices = np.argwhere(np.triu(sim_matrix) >= threshold)
-
-            pair_count = 0
-            for idx in indices:
-                i, j = int(idx[0]), int(idx[1])
-                sim = float(sim_matrix[i, j])
-                hi_i = dicts[i].get("hit_count", 0) or 0
-                hi_j = dicts[j].get("hit_count", 0) or 0
-                if hi_i >= hi_j:
-                    all_pairs.append((dicts[i], dicts[j], sim))
-                else:
-                    all_pairs.append((dicts[j], dicts[i], sim))
-                pair_count += 1
-
-            logger.info(
-                "consolidation: phase1 type=%s pairs_above_soft=%d elapsed=%.2fs",
-                mtype,
-                pair_count,
-                time.perf_counter() - t_type,
-            )
-
-        logger.info(
-            "consolidation: phase1 all types elapsed=%.2fs total_pairs=%d",
-            time.perf_counter() - phase1_t0,
-            len(all_pairs),
-        )
-
-        # Sort by similarity descending — merge the most similar first
-        all_pairs.sort(key=lambda x: x[2], reverse=True)
-        return all_pairs
-
-    def _execute_consolidation_merge(self, winner: dict, loser: dict) -> None:
-        """Merge loser into winner: combine fields, re-embed, re-summarize, archive loser.
-
-        Uses rule-based merge and summary generation (no LLM calls) to keep
-        consolidation fast.  Only the embedding API is called remotely.
-        """
-        winner_rec = MemoryRecord.from_dict(winner)
-        loser_rec = MemoryRecord.from_dict(loser)
-
-        # Rule-based merge (skip LLM to avoid slow API calls)
-        merged_content = self._merge_pair_fields(
-            winner_rec.content,
-            loser_rec.content,
-        )
-        merged_context = self._merge_pair_fields(
-            winner_rec.context,
-            loser_rec.context,
-        )
-        merged_resolution = self._merge_pair_fields(
-            winner_rec.resolution,
-            loser_rec.resolution,
-        )
-        merged_tags = self._merge_tags_lists(winner_rec.tags, loser_rec.tags)
-
-        # Accumulate hit_count from loser
-        loser_hits = loser_rec.hit_count or 0
-        if loser_hits > 0:
-            self.db.increment_memory_hit(
-                winner["id"],
-                content="",
-                context="",
-                resolution="",
-            )
-
-        # Re-embed (fast API call)
-        new_embedding = self.embedding.embed_memory_context(
-            memory_type=winner_rec.memory_type,
-            content=merged_content,
-            context=merged_context,
-            resolution=merged_resolution,
-        )
-
-        # Rule-based summaries (no LLM)
-        summary_l0, overview_l1 = self._generate_summaries_rule(
-            merged_content,
-            merged_context,
-            merged_resolution,
-        )
-
-        self.db.update_memory_merged_body(
-            winner["id"],
-            merged_content,
-            merged_context,
-            merged_resolution,
-            new_embedding,
-            summary_l0,
-            overview_l1,
-            tags=merged_tags,
-        )
-
-        # Archive the loser
-        self.db.update_memory_status(loser["id"], MemoryStatus.ARCHIVED.value)
-
     def _generate_summaries_rule(
         self, content: str, context: str, resolution: str
     ) -> tuple:
@@ -841,7 +571,12 @@ class MemoryService:
         new_context: str,
         new_resolution: str,
     ) -> tuple:
-        """Merge two memories: LLM abstraction first, regex fallback on failure."""
+        """Merge two memories via LLM abstraction.
+
+        If the LLM is unavailable or the call fails, return the original
+        fields unchanged — the hit is still recorded, and the merge will
+        be retried on the next duplicate upload when the LLM recovers.
+        """
         if self.llm_orchestrator is not None:
             try:
                 merged = self.llm_orchestrator.merge_memories(
@@ -867,11 +602,10 @@ class MemoryService:
                     )
             except Exception:
                 pass
-        return (
-            self._merge_pair_fields(old_content, new_content),
-            self._merge_pair_fields(old_context, new_context),
-            self._merge_pair_fields(old_resolution, new_resolution),
-        )
+        # LLM unavailable or failed — keep original text, skip rule-based merge.
+        # The contribution is still recorded via increment_memory_hit;
+        # text merge will succeed on the next duplicate upload when LLM recovers.
+        return (old_content, old_context, old_resolution)
 
     @staticmethod
     def _merge_tags_lists(

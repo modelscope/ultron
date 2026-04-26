@@ -98,7 +98,10 @@ stats = ultron.get_memory_stats() -> dict
 
 ### ingest
 
-统一摄取：按文件类型自动分发（`.jsonl` → 增量提取，其他 → LLM 提取）。支持文件、目录混合传入。
+统一摄取：按文件类型自动分发。支持文件、目录混合传入。
+
+- **`.jsonl`（默认 `Ultron`）**：先保存 session 元数据，再通过 **LLM 任务分割** 将对话拆分为独立 task segment，按 **内容指纹** 做增量去重写入 `task_segments`。由后台定时任务按 segment 粒度写入 trajectory 指标后，再对满足指标阈值的 segment 上传记忆；**不**在 ingest 当下用主 LLM 抽记忆。需传入 **`agent_id`** 以便按会话文件做增量追踪。
+- **其它文件**：LLM 文本提取后直接上传记忆。
 
 ```python
 result = ultron.ingest(
@@ -106,6 +109,8 @@ result = ultron.ingest(
     agent_id: str = "", 
 ) -> dict
 ```
+
+轨迹统计与 **SFT 导出**使用 `ultron.trajectory_service`。`export_sft()` 导出的是**分割后的独立 task segment**（每个 segment 是一组完整的多轮对话），可按 `task_type` 和 `min_quality_score`（默认与配置 `trajectory_sft_score_threshold` 一致，**0–1**，与 `quality_metrics` 内 `summary.overall_score` 同刻度）过滤。例如 `get_trajectory_stats()`、`export_sft(task_type=..., min_quality_score=0.8, limit=...)`，见 [轨迹中心](../Components/TrajectoryHub.md)。
 
 ### ingest_text
 
@@ -129,19 +134,9 @@ result = ultron.ingest_text(
 summary = ultron.run_tier_rebalance() -> dict
 ```
 
-### run_memory_decay
-
-`run_tier_rebalance` 的别名（向后兼容）。
-
-```python
-summary = ultron.run_memory_decay() -> dict
-```
-
----
-
 ## 原文归档（raw_user_uploads）
 
-开启 `archive_raw_uploads` 时：`ingest(paths)` 为每个摄取文件写入一行（`ingest_file`）；仅 `**ingest_text` / HTTP 纯文本摄取**（无 `source_file`）写入一行 UTF-8 原文（`ingest_text`）；**从文件读入再 LLM 提取时不重复写入正文**（已有 `ingest_file`）。`upload_skill` 为包内每个文件写入一行（`skill_upload_file`）。
+原始归档（有数据库时始终启用）：`ingest(paths)` 为每个摄取到的 `.jsonl` 写入一行（`ingest_file`）；**`ingest_text`** / HTTP 纯文本摄取（无 `source_file`）写入一行 UTF-8 原文（`ingest_text`）。`upload_skill` 为包内每个文件写入一行（`skill_upload_file`）。
 
 ### get_raw_user_upload
 
@@ -275,7 +270,7 @@ skills = ultron.list_all_skills() -> List[dict]
 
 ### Skill evolution and clusters
 
-面向**服务端与运维**：结晶与重新结晶在服务端 `_decay_loop` 中执行，**不提供**对外 HTTP。在与 `Ultron` **同一进程、同一 `data_dir`/数据库**下排障或观测时，可直接使用底层 SQLite `Database`（`ultron.db`）：
+面向**服务端与运维**：结晶与重新结晶在服务端后台任务 `run_decay_loop`（`ultron/services/background.py`）中与轨迹、层级重分配等同节拍执行，**不提供**对外 HTTP。在与 `Ultron` **同一进程、同一 `data_dir`/数据库**下排障或观测时，可直接使用底层 SQLite `Database`（`ultron.db`）：
 
 ```python
 clusters = ultron.db.get_all_clusters()
@@ -493,10 +488,8 @@ from ultron import (
 
     # 服务
     IntentAnalyzer,
-    ConversationExtractor,
     LLMService,
     LLMOrchestrator,
-    SmartIngestionService,
+    IngestionService,
 )
 ```
-

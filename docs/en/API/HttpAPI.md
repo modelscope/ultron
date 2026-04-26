@@ -221,12 +221,17 @@ GET /memory/stats
 ```
 POST /ingest
 {
-    "paths": ["/path/to/file.txt", "/path/to/sessions/"]
+    "paths": ["/path/to/file.txt", "/path/to/sessions/"],
+    "agent_id": "your-agent-or-terminal-id"
 }
 ```
 
+- **`agent_id`**: **Required** for **`.jsonl`** trajectory ingestion (used for per-file incremental fingerprint tracking); for other file types you may pass an empty string.
+- **`.jsonl`**: With default server configuration, the system first runs **LLM task segmentation** to split conversations into independent task segments, then uses **content fingerprints** for incremental deduplication into `task_segments`; memories are produced later from metric-eligible segments in the background job. The main LLM does **not** run memory extraction in this single request.
 - **`success`**: `true` when `data.successful > 0`
-- **`data`**: Raw smart-ingestion result (paths processed, counts, etc.; exact keys depend on runtime)
+- **`data`**: Raw smart-ingestion result (paths processed, success counts, etc.; `.jsonl` responses may include `new_segments`, `superseded_segments` among other fields; exact shape depends on runtime).
+
+See [Trajectory Hub](../Components/TrajectoryHub.md).
 
 ### Text ingestion
 

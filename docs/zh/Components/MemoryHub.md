@@ -6,21 +6,24 @@ description: Ultron（奥创）记忆中心：摄取、存储、聚类一体化
 
 # 记忆中心
 
-记忆中心（Memory Hub）是 Ultron 记忆侧的统一入口，整合三个子服务：
+记忆中心（Memory Hub）是 Ultron 记忆侧的统一入口，整合三个子服务，并与 **轨迹层（Trajectory Hub）** 配合：`.jsonl` 会话可先落轨迹表、经**任务分割**和 trajectory 指标分析后再写入记忆（详见 [轨迹中心](TrajectoryHub.md)）。
 
 | 子服务 | 职责 |
 |--------|------|
-| **Smart Ingestion** | ETL 管道：文件/文本 → 结构化记忆 |
+| **Ingestion Service** | ETL：会话型 `.jsonl`（`ingest(paths)`）→ LLM 任务分割 → task_segments（指纹去重）；无文件的 **`ingest_text`** 走主 LLM 直接抽记忆 |
 | **Memory Service** | 核心存储引擎：去重、层级、语义检索、脱敏 |
 | **Knowledge Cluster** | 语义聚类：将相关记忆分组，为技能结晶提供原料 |
 
-数据流：
+数据流（概览）：
 
 ```
-原始内容 (文件/文本/会话)
+原始内容（会话 `.jsonl` 路径 或 `ingest_text` 纯文本）
     │
     ▼
-Smart Ingestion — LLM 提取结构化记忆
+Ingestion Service
+ ├─ 会话 .jsonl（`ingest(paths)`）→ LLM 任务分割 → task_segments（指纹去重）
+ │       → 定时任务：ms-agent trajectory 指标 → 满足阈值的 segment → upload_memory
+ └─ `ingest_text`（无文件路径的纯文本）→ LLM 提取结构化记忆 → 直接上传
     │
     ▼
 Memory Service — 去重、embedding、存储、层级管理
@@ -31,21 +34,31 @@ Knowledge Cluster — 按语义相似度聚类，供 Skill Hub 结晶
 
 ---
 
-## Smart Ingestion（智能摄取）
+## Ingestion Service（智能摄取）
 
-统一知识提取管道。传入文件/目录路径或原始文本，按类型自动分发：`.jsonl` 走 ConversationExtractor（增量），其他走 LLM 文本提取。
+统一知识提取有两条入口，不要混为一谈：
+
+**`ingest(paths)`（路径列表：会话型 `.jsonl` 文件，或内含多个 `.jsonl` 的目录）**  
+典型用法是 **conversation 格式的 `.jsonl`**（每行一条带 `role`/`content` 的消息）。可对多个文件、多个目录一并传入；目录会递归展开，**仅收集其中的 `.jsonl`**（其余扩展名跳过）。对每个文件：先保存 session 元数据，再用 **LLM 任务分割**将对话拆分为独立 task segment，并按 **内容指纹** 做增量去重写入 **`task_segments`**。**本次请求内**不对其调用主 LLM 抽记忆；trajectory 指标分析与 `upload_memory` 由后台定时任务按 segment 粒度完成。若要从普通文本灌记忆，请用下面的 **`ingest_text`**。
+
+**`ingest_text(text)`（仅一段字符串）**  
+**始终**走主 LLM 文本提取并直接 `upload_memory`，**不**写入 `trajectory_records`，也**不**经过轨迹质量管线；与有无 `ingest`、是否上传过 `.jsonl` 无关。
+
+自定义组装 `IngestionService` 时须为 `.jsonl` 提供 **`trajectory_service`**，否则会摄取失败。
 
 ### 核心能力
 
 | 能力 | 说明 |
 |------|------|
-| **统一摄取** | 单一 `ingest(paths)` 入口，按扩展名自动分发 |
-| **文本摄取** | 直接处理原始文本 |
-| **会话提取** | `.jsonl` 文件自动走增量提取 |
-| **目录展开** | 传目录路径递归展开其下所有常规文件（跳过隐藏路径段、符号链接） |
+| **统一摄取** | 单一 `ingest(paths)` 入口；主场景为会话 `.jsonl` → LLM 任务分割 → task_segments |
+| **文本摄取** | `ingest_text` 仅字符串，主 LLM 直接抽记忆上传，不经轨迹表 |
+| **任务分割** | `.jsonl` 文件自动拆分为独立 task segment，以 segment 粒度计算指标和提取 |
+| **指纹去重** | 基于内容指纹（SHA-256）增量追踪，避免重复处理 |
+| **会话 / 轨迹** | `.jsonl` 写入 task_segments 并走 trajectory 指标管线；须注入 `trajectory_service` |
+| **目录展开** | 传目录路径递归展开，**仅** `.jsonl`（跳过隐藏路径段、符号链接） |
 | **类型判定** | 自动判断记忆类型 |
 | **去重处理** | 自动与已有记忆合并 |
-| **原文归档** | 开启 `archive_raw_uploads` 时：`ingest(paths)` 每文件一条 `ingest_file`；纯 `ingest_text`（非由文件读入）一条 `ingest_text`；由文件读入再提取时只归档文件字节，不重复存解码正文 |
+| **原文归档** | 有数据库时固定写入：`ingest(paths)` 对每个 `.jsonl` 一条 `ingest_file`；纯 `ingest_text` 一条 `ingest_text` |
 
 ### 使用示例
 
@@ -54,17 +67,19 @@ from ultron import Ultron
 
 ultron = Ultron()
 
-# 统一摄取（支持混合类型：普通文件 + .jsonl + 目录）
+# 统一摄取：会话导出（可多文件、可目录，均为 conversation 型 .jsonl）
 result = ultron.ingest(
-    paths=["/path/to/debug_log.txt", "/path/to/sessions/"],
+    paths=["/path/to/sessions/run-20250419.jsonl", "/path/to/sessions/"],
+    agent_id="my-agent",
 )
 
 print(f"处理文件数: {result['total_files']}")
 print(f"总记忆数: {result['total_memories']}")
 ```
+此处在**仅有 `.jsonl` 落轨迹**时，`total_memories` 反映的是**新写入的 segment 条数**（`new_segments`），记忆入库发生在后续定时任务。
 
 ```python
-# 文本摄取
+# 文本摄取（无文件路径：直接抽记忆，不经过轨迹表）
 result = ultron.ingest_text(
     text="""
     排查过程：
@@ -89,22 +104,28 @@ for mem in result.get("memories", []):
 对每个文件：归档原始字节到 raw_user_uploads
  （跳过超过 10MB 的文件；归档失败不阻塞摄取）
     ↓
-按扩展名分发
- ├─ .jsonl → ConversationExtractor（增量）
- └─ 其他   → LLM 文本提取
+每个 `.jsonl` 文件
+    → LLM 任务分割 → 独立 task segments（指纹去重）
+    → 同时写入 trajectory_records 作为 session 元数据
     ↓
-上传到 Memory Service（去重、晋升）
+Memory Service（去重、晋升）；由定时任务对满足指标阈值的 segment 再上传
     ↓
 分配到 Knowledge Cluster（语义聚类）
     ↓
 汇总结果
 ```
 
-### 增量会话处理
+### 增量会话与任务分割
 
-1. 服务端按文件路径追踪已处理行数
-2. 每次只处理新增行
-3. 可配置 `session_extract_overlap_lines` 在新增行前加入上文衔接
+**`.jsonl`**：服务端对每个文件执行 **LLM 任务分割**，将对话拆分为独立 task segment。每个 segment 基于消息内容计算 **SHA-256 指纹**（16 字符 hex）。重新上传同一文件时：
+- 指纹匹配 → 跳过（幂等）
+- 指纹不匹配 → 废弃旧 segment 的 memory（通过 tag 精准 archive），重新处理
+
+不同路径的文件视为不同 session，**不做跨文件去重**。详见 [轨迹中心](TrajectoryHub.md)。
+
+### 定时任务与层级重分配
+
+后台 `ultron/services/background.py` 中的 `run_decay_loop`（由 `server.py` 的 lifespan 启动）在 **tier rebalance** 之前依次执行：**任务分段** → **segment 指标标注** → **从满足阈值的 segment 提取记忆**（`TrajectoryMemoryExtractor`） → `run_tier_rebalance` → 技能进化 → 记忆整合（若启用）。因此从 `.jsonl` 进入的记忆可能比 ingest 请求晚一个 `decay_interval_hours` 周期才入库。
 
 ### LLM 提取
 
@@ -137,7 +158,6 @@ for mem in result.get("memories", []):
 |--------|------|
 | `llm_max_input_tokens` | 输入内容的最大 token 数 |
 | `llm_prompt_reserve_tokens` | 预留给回复的 token |
-| `conversation_extract_window_tokens` | 会话分段的窗口大小 |
 
 超长内容会被自动截断或分段处理。
 
@@ -155,7 +175,7 @@ for mem in result.get("memories", []):
 | **WARM** | 中频命中（next M%） | 上下文匹配时返回 |
 | **COLD** | 低频命中（剩余） | 默认参与检索，但排名靠后（tier boost 0.8 + 时间衰减） |
 
-层级由 **`run_tier_rebalance`** 定期批量重分配（后台任务，间隔 `decay_interval_hours`）：
+层级由 **`run_tier_rebalance`** 定期批量重分配（同一后台循环中，排在 trajectory 指标分析与满足阈值的 segment 写记忆**之后**，间隔 `decay_interval_hours`）：
 
 1. 按 `hit_count` DESC、`last_hit_at` DESC 排序所有活跃记忆
 2. 前 `hot_percentile`%（默认 10%）→ HOT
@@ -241,7 +261,7 @@ details = ultron.get_memory_details(["id1", "id2", "id3"])
 **命中后**：
 
 1. 日志 + 统计：`increment_memory_hit`，原文写入 **`memory_contributions`**
-2. 合并正文：若有 `llm_service` 则 LLM 合并，否则规则合并（子串保留较长文本，否则 `---` 拼接）
+2. 合并正文：通过 LLM 进行语义合并；若 LLM 不可用或调用失败，**跳过本次合并**（保留原文不变），等待下次重复上传时 LLM 恢复后重试
 3. 写回主表：正文变化则重算 embedding + 再生 L0/L1；仅 tags 变化则只更新标签
 
 **未命中**：创建新 MemoryRecord（WARM、active）。
@@ -373,7 +393,7 @@ POST /memories/details
 ## 依赖
 
 1. **DashScope API Key**：环境变量 `DASHSCOPE_API_KEY`
-2. **LLM 可用**：默认使用 `qwen3.6-flash`（摄取提取 + 记忆合并）
+2. **LLM 可用**：默认使用 `qwen3.6-flash`（非 jsonl 摄取提取、记忆合并等）；任务分割和 trajectory 指标模型使用配置中的 LLM 服务，见 [配置](Config.md) 与 [轨迹中心](TrajectoryHub.md)
 3. **Embedding 服务**：用于语义检索和聚类
 
-如果 LLM 不可用，摄取回退到规则推断记忆类型，合并回退到规则拼接。
+如果主 LLM 不可用，非 jsonl 摄取可能失败或受限；trajectory 指标模型不可用时会**跳过**指标分析，segment 保持未标注直至恢复。

@@ -57,8 +57,6 @@ def _mock_ultron_for_lifespan():
     m = MagicMock()
     m.config.async_embedding = False
     m.config.decay_interval_hours = 24.0
-    m.config.archive_raw_uploads = False
-    m.run_memory_decay.return_value = {}
     m.db = MagicMock()
     return m
 

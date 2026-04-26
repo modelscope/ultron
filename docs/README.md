@@ -63,6 +63,7 @@ docs/
 │   ├── Components/
 │   │   ├── Config.md
 │   │   ├── MemoryHub.md
+│   │   ├── TrajectoryHub.md
 │   │   ├── SkillHub.md
 │   │   └── HarnessHub.md
 │   ├── API/
@@ -79,6 +80,7 @@ docs/
     ├── Components/        # 核心组件
     │   ├── Config.md
     │   ├── MemoryHub.md
+    │   ├── TrajectoryHub.md
     │   ├── SkillHub.md
     │   └── HarnessHub.md
     ├── API/               # 接口文档
