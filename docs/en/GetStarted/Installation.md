@@ -84,8 +84,6 @@ Other optional variables (full `ULTRON_*` list in [Configuration](../Components/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ULTRON_SESSION_EXTRACT_OVERLAP_LINES` | Overlap lines for incremental extract | `5` |
-| `ULTRON_CONVERSATION_EXTRACT_WINDOW_TOKENS` | Max tokens per LLM window | `65536` |
 | `ULTRON_MEMORY_MERGE_MAX_FIELD_TOKENS` | Max tokens per field when merging | `8192` |
 
 ### Search responses
@@ -118,7 +116,6 @@ Other optional variables (full `ULTRON_*` list in [Configuration](../Components/
 |----------|-------------|---------|
 | `ULTRON_LOG_LEVEL` | Log level | `INFO` |
 | `ULTRON_RESET_TOKEN` | Auth token for `/reset` (unset disables) | none |
-| `ULTRON_ARCHIVE_RAW_UPLOADS` | Archive ingest files, ingest_text payloads, skill uploads (not `upload_memory`) | `1` |
 
 More fields (async embedding queue, hot summary caps, etc.) are documented in [Configuration](../Components/Config.md).
 

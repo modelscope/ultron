@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import hashlib
 from functools import lru_cache
 from typing import Callable, List
+
+from .jsonl_session_messages import message_body_for_llm, segment_fingerprint_canonical_json
 
 try:
     import tiktoken
@@ -13,6 +16,9 @@ except ImportError:
 
 
 TokenCounter = Callable[[str], int]
+
+# Roles included when joining/splitting conversation text for LLM prompts.
+CONVERSATION_ROLES = ("user", "assistant", "tool", "system")
 
 
 @lru_cache(maxsize=8)
@@ -100,7 +106,7 @@ def join_messages_lines_within_token_budget(
     max_tokens: int,
     count_tokens: TokenCounter,
     *,
-    roles: tuple = ("user", "assistant"),
+    roles: tuple = CONVERSATION_ROLES,
 ) -> str:
     """Append [role]: content lines in order; truncate the last body if needed to fit."""
     if max_tokens <= 0:
@@ -111,10 +117,12 @@ def join_messages_lines_within_token_budget(
 
     for msg in messages:
         role = msg.get("role", "")
-        content = msg.get("content", "")
-        if role not in roles or not content:
+        if role not in roles:
             continue
-        line = f"[{role}]: {content}"
+        body = message_body_for_llm(msg)
+        if not body:
+            continue
+        line = f"[{role}]: {body}"
         line_tokens = count_tokens(line)
         if line_tokens <= max_tokens - used:
             lines.append(line)
@@ -128,7 +136,7 @@ def join_messages_lines_within_token_budget(
         if p_tokens >= remaining:
             break
         body_budget = remaining - p_tokens
-        body = truncate_text_to_token_limit(content, body_budget, count_tokens)
+        body = truncate_text_to_token_limit(body, body_budget, count_tokens)
         if body:
             lines.append(prefix + body)
         break
@@ -138,16 +146,18 @@ def join_messages_lines_within_token_budget(
 
 def join_messages_full_text(
     messages: List[dict],
-    roles: tuple = ("user", "assistant"),
+    roles: tuple = CONVERSATION_ROLES,
 ) -> str:
     """Join messages as [role]: lines without truncation."""
     lines: List[str] = []
     for msg in messages:
         role = msg.get("role", "")
-        content = msg.get("content", "")
-        if role not in roles or not content:
+        if role not in roles:
             continue
-        lines.append(f"[{role}]: {content}")
+        body = message_body_for_llm(msg)
+        if not body:
+            continue
+        lines.append(f"[{role}]: {body}")
     return "\n".join(lines)
 
 
@@ -156,7 +166,7 @@ def split_messages_into_token_windows(
     window_tokens: int,
     count_tokens: TokenCounter,
     *,
-    roles: tuple = ("user", "assistant"),
+    roles: tuple = CONVERSATION_ROLES,
 ) -> List[List[dict]]:
     """Split user/assistant messages into consecutive chunks under window_tokens each."""
     wt = max(256, int(window_tokens)) if window_tokens and window_tokens > 0 else 65536
@@ -164,10 +174,11 @@ def split_messages_into_token_windows(
     normalized: List[dict] = []
     for msg in messages:
         role = msg.get("role", "")
-        content = msg.get("content", "")
-        if role not in roles or not content:
+        if role not in roles:
             continue
-        normalized.append({"role": role, "content": content})
+        if not message_body_for_llm(msg):
+            continue
+        normalized.append(dict(msg))
 
     if not normalized:
         return []
@@ -177,16 +188,17 @@ def split_messages_into_token_windows(
         return count_tokens(b) if b else 0
 
     def truncate_one(msg: dict) -> dict:
-        role = msg["role"]
-        content = msg["content"]
+        role = msg.get("role", "")
+        body = message_body_for_llm(msg)
         prefix = f"[{role}]: "
         p_tok = count_tokens(prefix)
         if p_tok >= wt:
             return {"role": role, "content": " "}
         body_budget = max(1, wt - p_tok)
-        body = truncate_text_to_token_limit(content, body_budget, count_tokens)
+        body = truncate_text_to_token_limit(body, body_budget, count_tokens)
         if not body.strip():
             body = " "
+        # Lossy: oversized native messages become plain {role, content} in this chunk.
         return {"role": role, "content": body}
 
     chunks: List[List[dict]] = []
@@ -214,3 +226,9 @@ def split_messages_into_token_windows(
     if current:
         chunks.append(current)
     return chunks
+
+
+def compute_segment_fingerprint(messages: List[dict]) -> str:
+    """SHA-256 fingerprint from canonical native message JSON. 16-char hex."""
+    raw = segment_fingerprint_canonical_json(messages)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

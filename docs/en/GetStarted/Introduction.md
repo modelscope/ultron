@@ -1,14 +1,24 @@
 ---
 slug: Introduction
 title: Introduction
-description: Ultron self-evolving collective intelligence for AI agents (Memory Hub, Skill Hub, Harness Hub)
+description: Ultron self-evolving collective intelligence for AI agents
 ---
 
 # Quick start
 
-Ultron is a **self-evolving collective intelligence system** for general AI agents. It is built around three hubs: **Memory Hub**, **Skill Hub**, and **Harness Hub**. It turns fragmented, session-local experience into **group knowledge that is easy to retrieve and reuse**: one resolved pitfall can protect everyone; one effective fix can become a reusable playbook that **keeps evolving automatically as new knowledge arrives**; a carefully tuned agent profile can be published as a **shared blueprint** that other instances **load in one step**.
+Ultron is a **self-evolving collective intelligence system** for general AI agents, built around four core hubs: **Trajectory Hub**, **Memory Hub**, **Skill Hub**, and **Harness Hub**. It turns fragmented, session-local task trajectories into **group knowledge that is easy to search, reuse, and evolve**: high-quality trajectories are first split, scored, and distilled into shared memories so that one learned lesson can help everyone; repeatedly validated experience crystallizes into reusable skills and keeps self-evolving as new evidence arrives; agent profiles tuned with memory, skills, and persona can be published as a **shared blueprint** that other instances **load in one step**. On the server side, Ultron can also **self-train and self-evolve a model** from high-quality trajectories accumulated in Trajectory Hub, and later **lower user-side model cost** by routing through that model.
 
 ## Core capabilities
+
+### 🧭 Trajectory Hub
+
+| Capability | Description |
+|------------|-------------|
+| **Task segmentation** | Splits session `.jsonl` into independent task segments; long conversations are handled in multiple token-budgeted windows |
+| **Metrics** | Uses `ms_agent.trajectory` to write per-segment quality metrics for memory and training filters |
+| **Incremental tracking** | Content fingerprints skip unchanged segments; when appended writes change a segment, old memories are invalidated and the segment is reprocessed |
+| **Deferred extraction** | Ingest only records the session; background jobs on `decay_interval_hours` segment, score, and extract memories |
+| **Model self-evolution** | Server-side self-training and self-evolution on high-quality trajectories; can reduce user model cost later via a router |
 
 ### 💭 Memory Hub
 
@@ -20,7 +30,7 @@ Ultron is a **self-evolving collective intelligence system** for general AI agen
 | **Deduplication and merge** | Near-duplicate vectors of the same type merge; embeddings and summaries refresh; batch consolidation supported |
 | **Intent-expanded retrieval** | LLM-based multi-angle query expansion to improve recall |
 | **Time decay** | `hotness = exp(-α × days)` — long-unused memories are down-ranked over time |
-| **Smart ingestion** | Files, plain text, or `.jsonl` session logs; LLM extracts structured memories; incremental progress tracking |
+| **Smart ingestion** | `ingest(paths)` ingests session `.jsonl` or directories of `.jsonl`; `ingest_text(text)` ingests plain text and has the LLM extract memories directly |
 | **Data sanitization** | Presidio-based bilingual PII detection; automatic redaction before persistence |
 
 ### ⚡ Skill Hub
@@ -43,25 +53,25 @@ Ultron is a **self-evolving collective intelligence system** for general AI agen
 ## Four-layer architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                   Ultron                                     │
-│  ┌──────────────┐  ┌────────────────┐  ┌───────────────┐  ┌───────────────┐  │
-│  │ Smart Ingest │  │ Remote Memory  │  │ Skill Hub     │  │ Harness Hub   │  │
-│  │ ingest_*     │  │ HOT/WARM/COLD  │  │ search_skills │  │ publish       │  │
-│  │ LLM extract  │  │ L0/L1/full     │  │ upload_skill  │  │ import        │  │
-│  │              │  │ dedup + rebal  │  │ skill evolve  │  │ sync profile  │  │
-│  │              │  │ intent + decay │  │ LLM catalog   │  │ mem/skill/soul│  │
-│  └──────────────┘  └────────────────┘  └───────────────┘  └───────────────┘  │
-└──────────────────────────────────────────────────────────────────────────────┘
-          ▲                   ▲                  ▲                   ▲
-       Sentry A            Sentry B           Sentry C           Sentry D
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                                   Ultron                                       │
+│  ┌────────────────┐  ┌───────────────┐  ┌───────────────┐  ┌────────────────┐  │
+│  │ Trajectory Hub │  │ Memory Hub    │  │ Skill Hub     │  │ Harness Hub    │  │
+│  │ segments       │  │ HOT/WARM/COLD │  │ search_skills │  │ publish        │  │
+│  │ metrics        │  │ L0/L1/Full    │  │ upload_skill  │  │ import         │  │
+│  │ self-train     │  │ dedup/rebal   │  │ skill evolve  │  │ sync profile   │  │
+│  │ router-ready   │  │ intent/decay  │  │ LLM catalog   │  │ mem/skill/soul │  │
+│  └────────────────┘  └───────────────┘  └───────────────┘  └────────────────┘  │
+└────────────────────────────────────────────────────────────────────────────────┘
+            ▲                   ▲                 ▲                   ▲
+         Sentry A            Sentry B          Sentry C            Sentry D
 ```
 
 | Module | Responsibility | Main code |
 |--------|----------------|-----------|
-| **Smart Ingestion** | Raw files/text → LLM-extracted memories | `services/smart_ingestion.py`, `core/llm_service.py` |
-| **Remote Memory** | Shared experience storage, semantic search, percentile tier rebalance | `services/memory/`, `core/database.py` |
-| **Skill Hub** | Structured skills, semantic retrieval | `services/skill/`, `core/storage.py` |
+| **Trajectory Hub** | Session task split, trajectory metrics, deferred memory extraction, training data and model self-evolution | `services/trajectory/`, `services/memory/trajectory_extractor.py`, `services/training/` |
+| **Memory Hub** | Collective experience storage, semantic search, percentile tier rebalance | `services/memory/`, `core/database.py` |
+| **Skill Hub** | Structured skills, semantic retrieval, skill self-evolution | `services/skill/`, `core/storage.py` |
 | **Harness Hub** | Publish, import, and sync agent harness config | `services/harness/` |
 
 ## Installation
@@ -144,6 +154,7 @@ Internal and catalog skills are searched through the same `/skills/search` endpo
 
 - [Configuration](../Components/Config.md)
 - [Memory Hub](../Components/MemoryHub.md)
+- [Trajectory Hub](../Components/TrajectoryHub.md)
 - [Skill Hub](../Components/SkillHub.md)
 - [Harness Hub](../Components/HarnessHub.md)
 - [HTTP API reference](../API/HttpAPI.md)

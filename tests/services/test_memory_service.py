@@ -78,6 +78,8 @@ class TestUploadMemoryMergedBody(unittest.TestCase):
     """upload_memory near-duplicate path: merge body, tags-only, or new row."""
 
     def test_second_upload_merges_body_and_persists(self):
+        """When LLM is unavailable, near-duplicate hit still records the
+        contribution but keeps original text unchanged (no rule-based merge)."""
         fixed_vec = [1.0, 0.0, 0.0]
         emb = MagicMock()
         emb.embed_memory_context = MagicMock(return_value=fixed_vec)
@@ -106,9 +108,9 @@ class TestUploadMemoryMergedBody(unittest.TestCase):
             row = db.get_memory_record(first.id)
             self.assertIsNotNone(row)
             body = row["content"]
+            # Without LLM, original text is kept unchanged
             self.assertIn("first unique paragraph", body)
-            self.assertIn("second unique paragraph", body)
-            self.assertIn("---", body)
+            self.assertNotIn("second unique paragraph", body)
             self.assertGreaterEqual(row["hit_count"], 2)
 
     def test_below_threshold_inserts_second_row(self):

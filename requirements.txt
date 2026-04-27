@@ -19,6 +19,9 @@ tiktoken>=0.5.0
 # Optional ~/.ultron/.env loading (ultron.config.load_ultron_dotenv)
 python-dotenv>=1.0.0
 
+# Scripts (e.g. import_zclawbench_trajectories.py)
+tqdm>=4.66.0
+
 # Authentication (user login/registration + JWT sessions)
 PyJWT>=2.8.0
 bcrypt>=4.0.0

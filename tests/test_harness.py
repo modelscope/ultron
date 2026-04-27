@@ -219,18 +219,6 @@ class TestHarnessService(unittest.TestCase):
         self.assertIn("short_code", share)
         self.assertEqual(len(share["short_code"]), 6)
 
-    # NOTE: import_share is deprecated — replaced by short-code curl|bash flow.
-    # def test_share_and_import_legacy(self):
-    #     self.svc.sync_up("u1", "d1", "nanobot", {"SOUL.md": "soul A"})
-    #     share = self.svc.create_share("u1", "d1")
-    #     imported = self.svc.import_share(share["token"], "u2", "d2")
-    #     self.assertEqual(imported["resources"]["SOUL.md"], "soul A")
-    #     self.assertEqual(imported["product"], "nanobot")
-
-    # def test_import_nonexistent_token(self):
-    #     with self.assertRaises(ValueError):
-    #         self.svc.import_share("nonexistent", "u2", "d2")
-
     def test_get_share_by_code(self):
         self.svc.sync_up("u1", "d1", "nanobot", {"SOUL.md": "soul"})
         share = self.svc.create_share("u1", "d1")

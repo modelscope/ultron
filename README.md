@@ -23,6 +23,7 @@
 
 ## 🎉 News
 
+* 🧭 Apr 26, 2026: **Agent evolution** in Trajectory Hub: **segmented** runs + `ms_agent.trajectory` **metrics** → **SFT** → **self-training**; training is **supported by [Twinkle](https://github.com/modelscope/twinkle)** and runs in a **client-server training framework** (Twinkle workbench). [Trajectory Hub](docs/en/Components/TrajectoryHub.md).
 * 🧬 Apr 19, 2026: **Skill evolution** lands in Skill Hub: related memories form **semantic clusters**, then **crystallize** into multi-step workflow skills and **re-crystallize** when enough new evidence arrives, with **provenance-grounded verification** and a **structure-score upgrade gate** so evolved skills cannot regress. See [Skill Hub](docs/en/Components/SkillHub.md#skill-self-evolution) and [Configuration](docs/en/Components/Config.md#skill-evolution).
 
 
@@ -51,7 +52,7 @@ There are two ways to use Ultron depending on your role:
 
 ## Overview
 
-Ultron is a **self-evolving collective intelligence system** for general-purpose AI agents, built around three core hubs — **Memory Hub**, **Skill Hub**, and **Harness Hub**. It distills scattered, session-local experience into **collective knowledge** that is **easy to retrieve and reuse**: one shared pitfall helps the whole team avoid the same mistake; one proven fix becomes a reusable skill that **evolves automatically as new evidence accumulates**; a carefully tuned agent profile can be published as a **shared blueprint** that other agent instances **load in one step**.
+Ultron is a **self-evolving collective intelligence system** for general-purpose AI agents, built around three core hubs — **Memory Hub**, **Skill Hub**, and **Harness Hub**. It distills scattered, session-local experience into **collective knowledge** that is **easy to retrieve and reuse**: one shared pitfall helps the whole team avoid the same mistake; one proven fix becomes a reusable skill that **evolves automatically as new evidence accumulates**; a carefully tuned agent profile can be published as a **shared blueprint** that other agent instances **load in one step**. On the server side, Ultron can also **self-train and self-evolve a model** from high-quality trajectories accumulated in Trajectory Hub, and later **lower user-side model cost** by routing through that model.
 
 ### Dashboard highlights
 
@@ -127,23 +128,55 @@ Ultron is a **self-evolving collective intelligence system** for general-purpose
 
 ### Data
 
-#### Memory (from [ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench))
+#### Trajectory (from [ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench) and [lmcache-agentic-traces](https://huggingface.co/datasets/sammshen/lmcache-agentic-traces) — **WildClawLMCache**)
 
-**1,746** structured memories extracted from real agent task trajectories:
+| Source | Count |
+|--------|------:|
+| [ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench) | **696** |
+| [lmcache-agentic-traces](https://huggingface.co/datasets/sammshen/lmcache-agentic-traces) — **WildClawLMCache** | **147** |
+
+#### Memory (from ZClawBench and WildClawLMCache subset of lmcache-agentic-traces)
+
+**1,803** structured memories extracted from real agent task trajectories:
 
 | Type | Count |
-|------|-------|
-| `pattern` | 1,254 |
-| `error` | 196 |
-| `security` | 128 |
+|------|-------:|
+| `pattern` | 1,303 |
+| `error` | 200 |
+| `security` | 130 |
 | `life` | 122 |
-| `correction` | 46 |
+| `correction` | 47 |
+| `preference` | 1 |
 
 #### Skill
 
-**Internal** (generated from memories): **182** skills auto-generated as memories reach HOT tier.
+**Internal** (crystallized from memories): **30** distilled skills.
 
-**External** ([ModelScope Skill Hub](https://www.modelscope.cn/skills)): **30,000** skills indexed with embeddings across categories like Developer Tools (11,415), Code Quality (6,696), Frontend (2,530), and more.
+**External** ([ModelScope Skill Hub](https://www.modelscope.cn/skills)): **82,089** skills indexed with embeddings. Breakdown of the labeled set:
+
+| Category | Count |
+|----------|------:|
+| Developer tools | 28,749 |
+| Code quality | 18,257 |
+| Media | 7,883 |
+| Frontend | 6,930 |
+| Cloud / delivery tooling | 5,903 |
+| Go-to-market | 5,055 |
+| Skills management | 4,373 |
+| Other | 1,805 |
+| AI automation | 1,303 |
+| Mobile | 1,292 |
+| Marketing & growth | 127 |
+| Content strategy | 96 |
+| Analytics | 78 |
+| UI/UX design | 61 |
+| Skill authoring | 58 |
+| API design | 55 |
+| Document processing (PDF / PPTX / DOCX) | 25 |
+| General utilities | 11 |
+| Cost optimization | 4 |
+| Monitoring | 2 |
+| Templates | 1 |
 
 #### Harness
 
@@ -160,6 +193,16 @@ Harness lets you compose **role**, **personality (MBTI)**, and **zodiac** preset
 ---
 
 ## Core capabilities
+
+### 🧭 Trajectory Hub
+
+| Capability | Description |
+|------------|-------------|
+| **Task segmentation** | Splits session `.jsonl` into independent task segments; long conversations are handled in multiple token-budgeted windows |
+| **Metrics** | Uses `ms_agent.trajectory` to write per-segment quality metrics for memory and training filters |
+| **Incremental tracking** | Content fingerprints skip unchanged segments; when appended writes change a segment, old memories are invalidated and the segment is reprocessed |
+| **Deferred extraction** | Ingest only records the session; background jobs on `decay_interval_hours` segment, score, and extract memories |
+| **Model self-evolution** | Server-side self-training and self-evolution on high-quality trajectories; can reduce user model cost later via a router |
 
 ### 💭 Memory Hub
 
@@ -244,7 +287,7 @@ pip install -e .
 
 # Configure OpenAI-compatible LLM and set DashScope API Key for embedding
 echo 'ULTRON_LLM_PROVIDER=dashscope' >> ~/.ultron/.env
-echo 'ULTRON_MODEL=qwen3.5-flash' >> ~/.ultron/.env
+echo 'ULTRON_MODEL=qwen3.6-flash' >> ~/.ultron/.env
 echo 'ULTRON_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1' >> ~/.ultron/.env
 echo 'ULTRON_API_KEY=your-key' >> ~/.ultron/.env
 echo 'DASHSCOPE_API_KEY=your-key' >> ~/.ultron/.env
@@ -284,7 +327,7 @@ Ultron builds upon the following open-source projects. We sincerely thank their 
 - **[agency-agents](https://github.com/msitarzewski/agency-agents)** — Role presets surfaced in Harness Hub (and related tooling) are **adapted from** this community role library; we track upstream for provenance and updates.
 - **[MS-Agent](https://github.com/modelscope/modelscope-agent)** — The agent framework that powers Ultron.
 - **[ModelScope Skills](https://modelscope.cn/skills)** — External skill discovery in Skill Hub builds on the ModelScope Skill Hub index and ecosystem.
-- **[ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench)** — Ultron bundles a sizable body of collective memories, including the **1,746** structured entries summarized under [Data](#data), grounded in real agent trajectories from this benchmark dataset.
+- **[ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench)** — Ultron bundles a sizable body of collective memories, including the structured entries summarized under [Data](#data), grounded in real agent trajectories from this benchmark dataset.
 
 ---
 

@@ -245,7 +245,7 @@ EvolutionRecord:
 
 ### 后台执行
 
-进化没有独立的定时器。`run_evolution_cycle()` 在 `_decay_loop` 的同一节拍执行（紧跟 tier rebalance 之后），间隔由 `decay_interval_hours` 控制。每轮进化分两个阶段，共享一个批次上限（默认 3）：
+进化没有独立的定时器。`run_evolution_cycle()` 在后台 `run_decay_loop`（`ultron/services/background.py`）的同一节拍执行（紧跟 tier rebalance 之后），间隔由 `decay_interval_hours` 控制。每轮进化分两个阶段，共享一个批次上限（默认 3）：
 
 
 | 阶段  | 处理对象                       | 优先级  |

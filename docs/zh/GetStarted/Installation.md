@@ -93,8 +93,6 @@ export ULTRON_API_KEY="your-api-key"
 
 | 变量                                          | 说明                   | 默认值     |
 | ------------------------------------------- | -------------------- | ------- |
-| `ULTRON_SESSION_EXTRACT_OVERLAP_LINES`      | 增量提取时向前重叠的行数         | `5`     |
-| `ULTRON_CONVERSATION_EXTRACT_WINDOW_TOKENS` | 每次送 LLM 的最大 token 窗口 | `65536` |
 | `ULTRON_MEMORY_MERGE_MAX_FIELD_TOKENS`      | 合并记忆时单字段最大 token 数   | `8192`  |
 
 
@@ -133,7 +131,6 @@ export ULTRON_API_KEY="your-api-key"
 | ---------------------------- | ---------------------------------------------------------------- | ------ |
 | `ULTRON_LOG_LEVEL`           | 日志级别                                                             | `INFO` |
 | `ULTRON_RESET_TOKEN`         | `/reset` 接口鉴权 token（不设则禁用）                                       | 无      |
-| `ULTRON_ARCHIVE_RAW_UPLOADS` | 是否归档：`ingest` 文件、`ingest_text` 纯文本、技能包文件（**不含** `upload_memory`） | `1`    |
 
 
 更多字段（异步嵌入队列、热点摘要条数等）见 [配置文档](../Components/Config.md)。

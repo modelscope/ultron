@@ -75,6 +75,29 @@ ultron = Ultron(config=config)
 | `llm_max_retries`              | int   | `2`                                     | 首次请求失败后的重试次数（总尝试次数 = 该值 + 1）            |
 | `llm_retry_base_delay_seconds` | float | `1.0`                                   | 重试退避的时间基数（秒）                            |
 
+### Trajectory 指标
+
+Ultron 会把自己单独配置的 trajectory 指标模型注入到 `ms_agent.trajectory`。这里使用 `quality_llm_*` 配置槽位，输出为指标 JSON 和加权分数。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `quality_llm_provider` | str | `dashscope` | 指标模型提供商；环境变量 `ULTRON_QUALITY_LLM_PROVIDER` |
+| `quality_llm_model` | str | `qwen3.6-plus` | 指标模型名；环境变量 `ULTRON_QUALITY_LLM_MODEL` |
+| `quality_llm_base_url` | str | 与主 LLM 默认一致 | 指标模型 OpenAI-compatible 根 URL；环境变量 `ULTRON_QUALITY_LLM_BASE_URL` |
+| `quality_llm_api_key` | str | `""`（回退主 LLM） | 指标模型 API 密钥；环境变量 `ULTRON_QUALITY_LLM_API_KEY` |
+| `trajectory_memory_score_threshold` | float | `0.7` | 与 `quality_metrics` 中 `summary.overall_score`（0–1）同刻度，进入记忆粗筛的最低分；环境变量 `ULTRON_TRAJECTORY_MEMORY_SCORE_THRESHOLD` |
+| `trajectory_sft_score_threshold` | float | `0.8` | 与 `summary.overall_score` 同刻度，进入 SFT 导出/自训练的最低分；环境变量 `ULTRON_TRAJECTORY_SFT_SCORE_THRESHOLD` |
+
+
+### 轨迹会话 → 记忆抽取
+
+用于 **`TrajectoryService.extract_memories_from_segments`** 门面；实现位于 **`TrajectoryMemoryExtractor`**。从磁盘上的会话 **`.jsonl`** 读取满足 `trajectory_memory_score_threshold` 与 `is_memory_eligible` 的 segment 消息，按 token 窗口抽取后写入 Memory Hub。详见 [轨迹中心](TrajectoryHub.md)。
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `conversation_extract_window_tokens` | int | `65536`（实际不低于 `256`） | 将拼接后的对话按 token 切窗后逐窗调用主 LLM 的 `extract_memories_from_text`；环境变量 `ULTRON_CONVERSATION_EXTRACT_WINDOW_TOKENS` |
+| `session_extract_overlap_lines` | int | `5` | 在「新行尾」之前，从 `.jsonl` **再向前取 K 行**作为上下文；`ULTRON_SESSION_EXTRACT_OVERLAP_LINES`，最小为 `0` |
+
 
 ### 记忆层级
 
@@ -115,15 +138,6 @@ ultron = Ultron(config=config)
 | `l1_max_tokens` | int | `256` | L1 概览最大 token 数 |
 
 
-### 会话记忆提取
-
-
-| 配置项                                  | 类型  | 默认值     | 说明                               |
-| ------------------------------------ | --- | ------- | -------------------------------- |
-| `session_extract_overlap_lines`      | int | `5`     | 增量提取时前置上文行数                      |
-| `conversation_extract_window_tokens` | int | `65536` | 滑窗每段对话 token 上限（解析后 **不低于 256**） |
-
-
 ### 时间衰减
 
 
@@ -144,12 +158,9 @@ ultron = Ultron(config=config)
 | `embedding_queue_workers` | int  | `2`     | 后台 worker 数 |
 
 
-### 归档（摄取与技能包）
+### 原始上传归档（固定行为，无开关）
 
-
-| 配置项                   | 类型   | 默认值    | 说明                                                                                                                                                                                                                                                                  |
-| --------------------- | ---- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `archive_raw_uploads` | bool | `True` | 为真时：`ingest(paths)` 将**路径下每个待处理文件**的原始字节写入 `raw_user_uploads`（`source=ingest_file`）；**独立调用的** `ingest_text`（无来源文件路径）将整段 UTF-8 文本写入（`source=ingest_text`）；`upload_skill` 递归写入技能目录内文件（`skill_upload_file`）。`**upload_memory` 不归档**。单条 payload ≤10MB。不保存 HTTP JSON 整包。 |
+使用持久化数据库时，原始内容会写入 `raw_user_uploads`（无可关闭选项）：`ingest(paths)` 每个摄取到的 `.jsonl` 一条 `ingest_file`；独立 **`ingest_text`** 一条 `ingest_text`；**`upload_skill`** 包内每个文件一条 `skill_upload_file`。**`upload_memory` 不归档**。单条 payload ≤10MB；不保存 HTTP JSON 整包。
 
 ### 合并整理（Consolidation）
 
@@ -168,7 +179,7 @@ ultron = Ultron(config=config)
 | `cluster_similarity_threshold` | float | `0.75` | 记忆分配到簇的余弦相似度阈值                    |
 | `crystallization_threshold`    | int   | `5`    | 簇内记忆数达到此值后触发结晶                    |
 | `recrystallization_delta`      | int   | `3`    | 已结晶簇新增记忆达到此值后触发重结晶                |
-| `evolution_batch_limit`        | int   | `3`    | 每批次最多进化的簇数量                       |
+| `evolution_batch_limit`        | int   | `10`   | 每批次最多进化的簇数量                       |
 
 ### 认证（Authentication）
 
@@ -191,12 +202,18 @@ HTTP 日志见 [安装指南](../GetStarted/Installation.md)（`ULTRON_LOG_LEVEL
 | `ULTRON_EMBEDDING_BACKEND`                  | `embedding_backend`                  |
 | `ULTRON_EMBEDDING_MODEL`                    | `embedding_model`                    |
 | `ULTRON_EMBEDDING_DIMENSION`                | `embedding_dimension`                |
+| `ULTRON_CONVERSATION_EXTRACT_WINDOW_TOKENS` | `conversation_extract_window_tokens` |
+| `ULTRON_TRAJECTORY_MEMORY_SCORE_THRESHOLD`  | `trajectory_memory_score_threshold`  |
+| `ULTRON_TRAJECTORY_SFT_SCORE_THRESHOLD`     | `trajectory_sft_score_threshold`     |
+| `ULTRON_SESSION_EXTRACT_OVERLAP_LINES`      | `session_extract_overlap_lines`      |
+| `ULTRON_QUALITY_LLM_PROVIDER`               | `quality_llm_provider`               |
+| `ULTRON_QUALITY_LLM_MODEL`                  | `quality_llm_model`                  |
+| `ULTRON_QUALITY_LLM_BASE_URL`               | `quality_llm_base_url`               |
+| `ULTRON_QUALITY_LLM_API_KEY`                | `quality_llm_api_key`                |
 | `ULTRON_HOT_PERCENTILE`                     | `hot_percentile`                     |
 | `ULTRON_WARM_PERCENTILE`                    | `warm_percentile`                    |
 | `ULTRON_COLD_TTL_DAYS`                      | `cold_ttl_days`                      |
 | `ULTRON_DEDUP_SIMILARITY_THRESHOLD`         | `dedup_similarity_threshold`         |
-| `ULTRON_SESSION_EXTRACT_OVERLAP_LINES`      | `session_extract_overlap_lines`      |
-| `ULTRON_CONVERSATION_EXTRACT_WINDOW_TOKENS` | `conversation_extract_window_tokens` |
 | `ULTRON_MEMORY_MERGE_MAX_FIELD_TOKENS`      | `memory_merge_max_field_tokens`      |
 | `ULTRON_L0_MAX_TOKENS`                      | `l0_max_tokens`                      |
 | `ULTRON_L1_MAX_TOKENS`                      | `l1_max_tokens`                      |
@@ -225,7 +242,6 @@ HTTP 日志见 [安装指南](../GetStarted/Installation.md)（`ULTRON_LOG_LEVEL
 | `ULTRON_LLM_REQUEST_TIMEOUT`                | `llm_request_timeout_seconds`        |
 | `ULTRON_LLM_MAX_RETRIES`                    | `llm_max_retries`                    |
 | `ULTRON_LLM_RETRY_BASE_DELAY`               | `llm_retry_base_delay_seconds`       |
-| `ULTRON_ARCHIVE_RAW_UPLOADS`                | `archive_raw_uploads`                |
 | `ULTRON_DEDUP_SOFT_THRESHOLD`               | `dedup_soft_threshold`               |
 | `ULTRON_CONSOLIDATE_ENABLED`                | `consolidate_enabled`                |
 | `ULTRON_CONSOLIDATE_MAX_MERGES`             | `consolidate_max_merges`             |
@@ -250,4 +266,3 @@ config.skills_dir        # ~/.ultron/skills
 config.archive_dir       # ~/.ultron/archive
 config.models_dir        # ~/.ultron/models
 ```
-
