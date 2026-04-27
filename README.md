@@ -135,23 +135,48 @@ Ultron is a **self-evolving collective intelligence system** for general-purpose
 | [ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench) | **696** |
 | [lmcache-agentic-traces](https://huggingface.co/datasets/sammshen/lmcache-agentic-traces) — **WildClawLMCache** | **147** |
 
-#### Memory (from [ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench))
+#### Memory (from ZClawBench and WildClawLMCache subset of lmcache-agentic-traces)
 
-**1,746** structured memories extracted from real agent task trajectories:
+**1,803** structured memories extracted from real agent task trajectories:
 
 | Type | Count |
-|------|-------|
-| `pattern` | 1,254 |
-| `error` | 196 |
-| `security` | 128 |
+|------|-------:|
+| `pattern` | 1,303 |
+| `error` | 200 |
+| `security` | 130 |
 | `life` | 122 |
-| `correction` | 46 |
+| `correction` | 47 |
+| `preference` | 1 |
 
 #### Skill
 
-**Internal** (generated from memories): **182** skills auto-generated as memories reach HOT tier.
+**Internal** (crystallized from memories): **30** distilled skills.
 
-**External** ([ModelScope Skill Hub](https://www.modelscope.cn/skills)): **30,000** skills indexed with embeddings across categories like Developer Tools (11,415), Code Quality (6,696), Frontend (2,530), and more.
+**External** ([ModelScope Skill Hub](https://www.modelscope.cn/skills)): **82,089** skills indexed with embeddings. Breakdown of the labeled set:
+
+| Category | Count |
+|----------|------:|
+| Developer tools | 28,749 |
+| Code quality | 18,257 |
+| Media | 7,883 |
+| Frontend | 6,930 |
+| Cloud / delivery tooling | 5,903 |
+| Go-to-market | 5,055 |
+| Skills management | 4,373 |
+| Other | 1,805 |
+| AI automation | 1,303 |
+| Mobile | 1,292 |
+| Marketing & growth | 127 |
+| Content strategy | 96 |
+| Analytics | 78 |
+| UI/UX design | 61 |
+| Skill authoring | 58 |
+| API design | 55 |
+| Document processing (PDF / PPTX / DOCX) | 25 |
+| General utilities | 11 |
+| Cost optimization | 4 |
+| Monitoring | 2 |
+| Templates | 1 |
 
 #### Harness
 
@@ -302,7 +327,7 @@ Ultron builds upon the following open-source projects. We sincerely thank their 
 - **[agency-agents](https://github.com/msitarzewski/agency-agents)** — Role presets surfaced in Harness Hub (and related tooling) are **adapted from** this community role library; we track upstream for provenance and updates.
 - **[MS-Agent](https://github.com/modelscope/modelscope-agent)** — The agent framework that powers Ultron.
 - **[ModelScope Skills](https://modelscope.cn/skills)** — External skill discovery in Skill Hub builds on the ModelScope Skill Hub index and ecosystem.
-- **[ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench)** — Ultron bundles a sizable body of collective memories, including the **1,746** structured entries summarized under [Data](#data), grounded in real agent trajectories from this benchmark dataset.
+- **[ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench)** — Ultron bundles a sizable body of collective memories, including the structured entries summarized under [Data](#data), grounded in real agent trajectories from this benchmark dataset.
 
 ---
 
