@@ -327,6 +327,7 @@ Ultron builds upon the following open-source projects. We sincerely thank their 
 - **[agency-agents](https://github.com/msitarzewski/agency-agents)** — Role presets surfaced in Harness Hub (and related tooling) are **adapted from** this community role library; we track upstream for provenance and updates.
 - **[MS-Agent](https://github.com/modelscope/modelscope-agent)** — The agent framework that powers Ultron.
 - **[ModelScope Skills](https://modelscope.cn/skills)** — External skill discovery in Skill Hub builds on the ModelScope Skill Hub index and ecosystem.
+- **[SkillClaw](https://github.com/AMAP-ML/SkillClaw)** — Ultron **Skill Hub self-evolution** (semantic clustering, provenance-aware re-crystallization, and the broader "skills evolve with agents" design) is **informed by** this project’s collective skill-evolution research and open release. We thank the SkillClaw authors and community.
 - **[ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench)** — Ultron bundles a sizable body of collective memories, including the structured entries summarized under [Data](#data), grounded in real agent trajectories from this benchmark dataset.
 
 ---
