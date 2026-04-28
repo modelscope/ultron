@@ -313,6 +313,7 @@ Ultron 建立在以下开源项目之上，谨向作者与贡献者致谢：
 - **[agency-agents](https://github.com/msitarzewski/agency-agents)**：Harness Hub 中的角色预设（及相关工具链）**改编自**该社区角色库；我们会跟踪上游以保留来源与更新。
 - **[MS-Agent](https://github.com/modelscope/modelscope-agent)**：驱动 Ultron 的智能体框架。
 - **[ModelScope Skills](https://modelscope.cn/skills)**：Skill Hub 中的外部技能发现基于 ModelScope 技能中心的索引与生态。
+- **[SkillClaw](https://github.com/AMAP-ML/SkillClaw)**：Ultron Skill Hub 的技能自进化（语义聚类、可溯源的重新结晶，以及「技能与智能体共同进化」的整体设计）在思路上**借鉴了**该项目在群体技能进化方向上的研究与开源发布；谨向 SkillClaw 作者与社区致谢。
 - **[ZClawBench](https://huggingface.co/datasets/zai-org/ZClawBench)**：Ultron 内置了大量群体记忆，包括在[数据](#数据)中汇总的结构化记忆，均来源于该基准数据集中的真实智能体轨迹。
 
 ---
