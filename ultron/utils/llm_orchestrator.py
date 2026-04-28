@@ -353,6 +353,10 @@ New memory:
         return mt if mt in _MEMORY_TYPE_CLASSIFY_ALLOWED else None
 
     # ============ Skill Evolution (Cluster Crystallization) ============
+    #
+    # Reference: SkillClaw (https://github.com/AMAP-ML/SkillClaw).
+    # Prompts below borrow high-level ideas: crystallization / evolve constraints (environment-specific vs generic guidance, source-of-truth edits, targeted changes over full rewrites) and publication-style verification.
+    # ============
 
     def crystallize_skill_from_cluster(
         self,
@@ -364,6 +368,7 @@ New memory:
         Returns {"name": "...", "description": "...", "content": "..."} or None.
         Returns {"quality": "insufficient"} if memories are too scattered.
         """
+        # Prompt constraints borrowed from SkillClaw.
         memories_text = self._format_memories_for_prompt(memories)
         prompt = f"""You are a knowledge engineer. Below are {len(memories)} experience records from the same domain{f' ({topic})' if topic else ''}.
 Synthesize them into an executable multi-step workflow skill.
@@ -420,6 +425,7 @@ Return strictly as JSON:
         Returns {"name", "description", "content"} or {"evolution": "unnecessary"} or None.
         """
         memories_text = self._format_memories_for_prompt(memories)
+        # Editing principles borrowed from SkillClaw.
         prompt = f"""You are a knowledge engineer. Below is an existing skill and all experience records from its domain.
 Enhance the skill with new knowledge.
 
@@ -477,6 +483,7 @@ Return strictly as JSON:
             "\n- preserves_existing_value: Did the evolution preserve effective content from the previous version? (0-1)"
             if is_recrystallization else ""
         )
+        # Verifier prompt borrowed from SkillClaw.
         prompt = f"""You are an independent skill auditor. Below is a skill synthesized from experience records, along with its source experiences.
 Complete two evaluations:
 

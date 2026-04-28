@@ -1,4 +1,11 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
+#
+# Skill evolution (crystallization, re-crystallization, verification gates,
+# structure-score upgrade gate): references SkillClaw
+# (https://github.com/AMAP-ML/SkillClaw) for high-level verifier and publication
+# gating ideas, and editing constraints expressed in
+# ultron/utils/llm_orchestrator.py prompts.
+# Orchestration (KnowledgeClusterService, Memory Hub, persistence) is Ultron-specific.
 import logging
 import re
 from datetime import datetime
@@ -188,7 +195,9 @@ class SkillEvolutionEngine:
         new_structure_score = self._compute_structure_score(verification)
         old_structure_score = old_skill.meta.structure_score or 0.0
 
-        # Upgrade gate: new structure score must exceed the previous version
+        # Upgrade gate (only publish if new quality exceeds old): borrows the same intent as SkillClaw-style conservative publication; 
+        # Ultron uses a numeric structure score blend (see _compute_structure_score).
+        # Publish only when the new structure score beats the previous version.
         if new_structure_score <= old_structure_score:
             self.db.save_evolution_record(
                 skill_slug=cluster.skill_slug,
