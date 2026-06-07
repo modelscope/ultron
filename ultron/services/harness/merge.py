@@ -328,6 +328,24 @@ PRODUCT_FILE_CLASSES = {
         "config": frozenset([]),
         "heartbeat": "",
     },
+    "qwenpaw": {
+        "portable": frozenset([
+            "SOUL.md", "PROFILE.md", "MEMORY.md",
+        ]),
+        "config": frozenset([
+            "AGENTS.md", "HEARTBEAT.md", "BOOTSTRAP.md",
+        ]),
+        "heartbeat": "HEARTBEAT.md",
+    },
+    "openhuman": {
+        "portable": frozenset([
+            "SOUL.md", "IDENTITY.md", "USER.md", "PROFILE.md", "MEMORY.md",
+        ]),
+        "config": frozenset([
+            "HEARTBEAT.md",
+        ]),
+        "heartbeat": "HEARTBEAT.md",
+    },
 }
 
 # Fallback for unknown products
@@ -343,33 +361,60 @@ _heartbeat_merger = HeartbeatMerger()
 
 # ---- Cross-product path mapping ----
 # Maps (source_product, source_path) -> { target_product: target_path }
-# None means the file has no equivalent in that product (skip it)
-PATH_MAP = {
-    # USER.md variants
-    ("nanobot", "USER.md"): {"openclaw": "USER.md", "hermes": "memories/USER.md"},
-    ("openclaw", "USER.md"): {"nanobot": "USER.md", "hermes": "memories/USER.md"},
-    ("hermes", "memories/USER.md"): {"nanobot": "USER.md", "openclaw": "USER.md"},
-    # MEMORY.md variants
-    ("nanobot", "memory/MEMORY.md"): {"openclaw": "MEMORY.md", "hermes": None},
-    ("openclaw", "MEMORY.md"): {"nanobot": "memory/MEMORY.md", "hermes": None},
-    # SOUL.md — same path everywhere
-    ("nanobot", "SOUL.md"): {"openclaw": "SOUL.md", "hermes": "SOUL.md"},
-    ("openclaw", "SOUL.md"): {"nanobot": "SOUL.md", "hermes": "SOUL.md"},
-    ("hermes", "SOUL.md"): {"nanobot": "SOUL.md", "openclaw": "SOUL.md"},
-    # memory/HISTORY.md — nanobot only
-    ("nanobot", "memory/HISTORY.md"): {"openclaw": None, "hermes": None},
-    # IDENTITY.md — openclaw only
-    ("openclaw", "IDENTITY.md"): {"nanobot": None, "hermes": None},
-    # BOOTSTRAP.md — openclaw only
-    ("openclaw", "BOOTSTRAP.md"): {"nanobot": None, "hermes": None},
-    # Config files — nanobot/openclaw have them, hermes doesn't
-    ("nanobot", "AGENTS.md"): {"openclaw": "AGENTS.md", "hermes": None},
-    ("nanobot", "HEARTBEAT.md"): {"openclaw": "HEARTBEAT.md", "hermes": None},
-    ("nanobot", "TOOLS.md"): {"openclaw": "TOOLS.md", "hermes": None},
-    ("openclaw", "AGENTS.md"): {"nanobot": "AGENTS.md", "hermes": None},
-    ("openclaw", "HEARTBEAT.md"): {"nanobot": "HEARTBEAT.md", "hermes": None},
-    ("openclaw", "TOOLS.md"): {"nanobot": "TOOLS.md", "hermes": None},
-}
+# None means the file has no equivalent in that product (skip / catch-all).
+#
+# Rather than hand-write every pairwise entry (O(products^2) and easy to get
+# wrong as products are added), PATH_MAP is generated from compact semantic
+# *equivalence groups*: files that mean the same thing across products. Each
+# group lists the canonical path per product that has the concept. For a source
+# file in a group, the target path is that group's path for the target product,
+# or None when the target product lacks the concept (then it falls through to
+# the catch-all merge in merge_resources). The resulting PATH_MAP is the same
+# lookup dict its consumers expect.
+SEMANTIC_GROUPS = [
+    # Core identity / persona
+    {"nanobot": "SOUL.md", "openclaw": "SOUL.md", "hermes": "SOUL.md",
+     "qwenpaw": "SOUL.md", "openhuman": "SOUL.md"},
+    # About the human
+    {"nanobot": "USER.md", "openclaw": "USER.md", "hermes": "memories/USER.md",
+     "openhuman": "USER.md"},
+    # Long-term curated memory
+    {"nanobot": "memory/MEMORY.md", "openclaw": "MEMORY.md",
+     "qwenpaw": "MEMORY.md", "openhuman": "MEMORY.md"},
+    # Agent's own identity card
+    {"openclaw": "IDENTITY.md", "openhuman": "IDENTITY.md"},
+    # Combined identity + user profile (QwenPaw/OpenHuman concept)
+    {"qwenpaw": "PROFILE.md", "openhuman": "PROFILE.md"},
+    # Workspace operating instructions
+    {"nanobot": "AGENTS.md", "openclaw": "AGENTS.md", "qwenpaw": "AGENTS.md"},
+    # Periodic task list
+    {"nanobot": "HEARTBEAT.md", "openclaw": "HEARTBEAT.md",
+     "qwenpaw": "HEARTBEAT.md", "openhuman": "HEARTBEAT.md"},
+    # Tool notes
+    {"nanobot": "TOOLS.md", "openclaw": "TOOLS.md"},
+    # First-run bootstrap
+    {"openclaw": "BOOTSTRAP.md", "qwenpaw": "BOOTSTRAP.md"},
+    # Product-only files (single member -> maps to None everywhere else)
+    {"nanobot": "memory/HISTORY.md"},
+]
+
+_ALL_PRODUCTS = ["nanobot", "openclaw", "hermes", "qwenpaw", "openhuman"]
+
+
+def _build_path_map():
+    path_map = {}
+    for group in SEMANTIC_GROUPS:
+        for src_product, src_path in group.items():
+            targets = {
+                tgt_product: group.get(tgt_product)
+                for tgt_product in _ALL_PRODUCTS
+                if tgt_product != src_product
+            }
+            path_map[(src_product, src_path)] = targets
+    return path_map
+
+
+PATH_MAP = _build_path_map()
 
 # All known file paths per product (for "supported file" check)
 PRODUCT_KNOWN_FILES = {
@@ -383,6 +428,14 @@ PRODUCT_KNOWN_FILES = {
     ]),
     "hermes": frozenset([
         "SOUL.md", "memories/USER.md",
+    ]),
+    "qwenpaw": frozenset([
+        "SOUL.md", "PROFILE.md", "AGENTS.md", "MEMORY.md", "HEARTBEAT.md",
+        "BOOTSTRAP.md",
+    ]),
+    "openhuman": frozenset([
+        "SOUL.md", "IDENTITY.md", "USER.md", "PROFILE.md", "MEMORY.md",
+        "HEARTBEAT.md",
     ]),
 }
 
@@ -429,6 +482,24 @@ def _extract_user_diff_text(user_content: str, source_default: str) -> str:
     return "\n".join(diff_lines).strip()
 
 
+def _catch_all_file(product: str) -> str:
+    """The already-initialized markdown file that receives mutually-exclusive
+    (cross-product unmappable) content for a product.
+
+    Prefers ``AGENTS.md`` (the workspace operating-instructions file) when the
+    product has one; otherwise falls back to ``SOUL.md``, which every product
+    has. This guarantees overflow content lands in a file the target harness
+    actually loads, rather than as an orphaned file it ignores.
+    """
+    known = PRODUCT_KNOWN_FILES.get(product)
+    if known is None:
+        # Unknown product — assume AGENTS.md (default file class has it).
+        return "AGENTS.md"
+    if "AGENTS.md" in known:
+        return "AGENTS.md"
+    return "SOUL.md"
+
+
 def merge_resources(
     incoming: Dict[str, str],
     source_product: str,
@@ -463,6 +534,9 @@ def merge_resources(
 
     # Track which target default files have been handled
     handled_target_paths = set()
+    # Mutually-exclusive overflow blocks, applied to catch-all files after the
+    # main loop so a later normal merge of the same file can't overwrite them.
+    overflow_blocks: List[Tuple[str, str]] = []  # (catch_all_path, block_text)
 
     # 1. Process incoming files
     for path, content in incoming.items():
@@ -486,12 +560,32 @@ def merge_resources(
         # Resolve target path for cross-product
         target_path = _resolve_target_path(source_product, path, target_product)
 
-        # File not explicitly mapped to target product — import directly with original path
+        # File is mutually exclusive — the target product has no equivalent.
         if target_path is None:
-            result.merged_files[path] = content
+            # Data files (raw memory logs, wiki vault) are kept as-is rather than
+            # flattened into a persona file.
+            if path.startswith("memory/") or path.startswith("memories/") or path.startswith("wiki/"):
+                result.merged_files[path] = content
+                result.actions.append(MergeAction(
+                    path=path, action="import",
+                    detail=f"No mapping for {target_product}, imported as-is",
+                ))
+                continue
+            # Persona/config overflow: write the user's customizations into the
+            # target's already-initialized catch-all file, tagged with its origin.
+            user_diff = _extract_user_diff_text(content, source_defaults.get(path, ""))
+            if not user_diff:
+                result.actions.append(MergeAction(
+                    path=path, action="skip",
+                    detail=f"{path} has no equivalent in {target_product} and no user changes, skipped",
+                ))
+                continue
+            catch_all = _catch_all_file(target_product)
+            block = f"## Imported from {source_product} {path}\n\n{user_diff}\n"
+            overflow_blocks.append((catch_all, block))
             result.actions.append(MergeAction(
-                path=path, action="import",
-                detail=f"No mapping for {target_product}, imported as-is",
+                path=catch_all, action="merged",
+                detail=f"Mutually-exclusive content from {path} merged into {catch_all}",
             ))
             continue
 
@@ -613,5 +707,16 @@ def merge_resources(
                 path=path, action="default",
                 detail=f"Added from {target_product} default template",
             ))
+
+    # 3. Append mutually-exclusive overflow blocks to catch-all files. Done last
+    #    so the base is whatever the catch-all ended up being (a normal merge of
+    #    that file, or the target default filled in above).
+    for catch_all, block in overflow_blocks:
+        base = result.merged_files.get(catch_all)
+        if base is None:
+            base = target_defaults.get(catch_all, "")
+        result.merged_files[catch_all] = (
+            base.rstrip() + "\n\n" + block if base.strip() else block
+        )
 
     return result

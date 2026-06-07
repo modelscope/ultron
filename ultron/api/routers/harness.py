@@ -58,6 +58,8 @@ def _build_export_script(share: dict, product: str = "") -> PlainTextResponse:
         "nanobot": "$HOME/.nanobot/workspace",
         "openclaw": "$HOME/.openclaw/workspace",
         "hermes": "$HOME/.hermes",
+        "qwenpaw": "$HOME/.qwenpaw/workspaces/default",
+        "openhuman": "$HOME/.openhuman/workspace",
     }
     ws_path = WORKSPACE_PATHS.get(resolved_product, WORKSPACE_PATHS["nanobot"])
 
@@ -302,7 +304,7 @@ async def delete_harness_share(
 @router.get("/harness/share/export/{token}")
 async def export_harness_bundle(
     token: str,
-    product: str = Query("", description="Override product: nanobot/openclaw/hermes"),
+    product: str = Query("", description="Override product: nanobot/openclaw/hermes/qwenpaw/openhuman"),
 ):
     u = server_state.ultron
     if u is None:
@@ -316,7 +318,7 @@ async def export_harness_bundle(
 @router.get("/i/{code}")
 async def export_by_short_code(
     code: str,
-    product: str = Query("", description="Override product: nanobot/openclaw/hermes"),
+    product: str = Query("", description="Override product: nanobot/openclaw/hermes/qwenpaw/openhuman"),
 ):
     u = server_state.ultron
     if u is None:

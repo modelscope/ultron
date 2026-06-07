@@ -22,10 +22,20 @@ const PRODUCT_ALLOWLISTS: Record<string, string[]> = {
     'skills/*/SKILL.md', 'skills/*/DESCRIPTION.md', 'skills/*/_meta.json', 'skills/*/scripts/*', 'skills/*/references/*',
     'skills/*/*/SKILL.md', 'skills/*/*/_meta.json', 'skills/*/*/scripts/*', 'skills/*/*/references/*',
   ],
+  qwenpaw: [
+    'AGENTS.md', 'SOUL.md', 'PROFILE.md', 'BOOTSTRAP.md', 'MEMORY.md', 'HEARTBEAT.md',
+    'memory/*.md',
+    'skills/*/SKILL.md', 'skills/*/_meta.json', 'skills/*/scripts/*',
+  ],
+  openhuman: [
+    'SOUL.md', 'IDENTITY.md', 'USER.md', 'PROFILE.md', 'MEMORY.md', 'HEARTBEAT.md',
+    'wiki/*.md', 'wiki/summaries/*.md', 'wiki/notes/*.md',
+    'skills/*/SKILL.md', 'skills/*/_meta.json', 'skills/*/scripts/*',
+  ],
 };
 
-const PRODUCT_DIRS: Record<string, string> = { nanobot: '.nanobot', openclaw: '.openclaw', hermes: '.hermes' };
-const PRODUCT_MARKERS: Record<string, string> = { '.nanobot': 'nanobot', '.openclaw': 'openclaw', '.hermes': 'hermes' };
+const PRODUCT_DIRS: Record<string, string> = { nanobot: '.nanobot', openclaw: '.openclaw', hermes: '.hermes', qwenpaw: '.qwenpaw', openhuman: '.openhuman' };
+const PRODUCT_MARKERS: Record<string, string> = { '.nanobot': 'nanobot', '.openclaw': 'openclaw', '.hermes': 'hermes', '.qwenpaw': 'qwenpaw', '.openhuman': 'openhuman' };
 
 function globMatch(pattern: string, path: string) {
   const re = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
@@ -45,6 +55,12 @@ function resolveWorkspaceRelPath(fullRelPath: string, product: string) {
   const markerIdx = parts.indexOf(marker);
   if (markerIdx < 0) return null;
   if (product === 'hermes') return parts.slice(markerIdx + 1).join('/') || null;
+  if (product === 'qwenpaw') {
+    // ~/.qwenpaw/workspaces/{agent_id}/<rel> — skip the workspaces segment + agent id
+    const wssIdx = parts.indexOf('workspaces', markerIdx + 1);
+    if (wssIdx >= 0) return parts.slice(wssIdx + 2).join('/') || null;
+    return parts.slice(markerIdx + 1).join('/') || null;
+  }
   const wsIdx = parts.indexOf('workspace', markerIdx + 1);
   if (wsIdx >= 0) return parts.slice(wsIdx + 1).join('/') || null;
   return parts.slice(markerIdx + 1).join('/') || null;
@@ -172,7 +188,8 @@ export default function UploadWorkspace({ onUploaded }: { onUploaded?: () => voi
         <div className="text-xs text-mid-gray mt-1">
           {t('harness.upload.hintPaths')}{' '}
           <code className="text-primary">~/.nanobot</code>, <code className="text-primary">~/.openclaw</code>,{' '}
-          <code className="text-primary">~/.hermes</code>
+          <code className="text-primary">~/.hermes</code>, <code className="text-primary">~/.qwenpaw</code>,{' '}
+          <code className="text-primary">~/.openhuman</code>
         </div>
       </div>
       )}

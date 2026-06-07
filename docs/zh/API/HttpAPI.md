@@ -579,7 +579,7 @@ GET /i/{code}
 GET /harness/defaults/{product}
 ```
 
-返回指定产品（`nanobot`、`openclaw`、`hermes`）的默认工作空间文件。
+返回指定产品（`nanobot`、`openclaw`、`hermes`、`qwenpaw`、`openhuman`）的默认工作空间文件。
 
 **响应**：
 
@@ -590,6 +590,69 @@ GET /harness/defaults/{product}
     "files": {"SOUL.md": "...", "AGENTS.md": "..."}
 }
 ```
+
+---
+
+## 仓库 API（ModelScope-hub 风格，`/api/v1/agents/*`）
+
+提供 ModelScope-hub 风格的统一仓库接口，用于按统一契约获取和上传 Ultron 中已存储的 harness 信息。它是现有 harness 存储之上的适配层：
+
+| 仓库概念 | 映射到 Ultron |
+|---|---|
+| `:Path`（用户/组织） | `user_id`（当前登录用户，须与调用者一致）|
+| `:Name`（仓库名） | `agent_id` |
+| `Framework` | `product`（OpenClaw / QwenPaw / nanobot 等）|
+| 仓库文件 | `harness_profiles.resources_json`（`{相对路径: 内容}`）|
+
+所有端点均需 `Authorization: Bearer <JWT>`。**注意**：底层存储仅支持 UTF-8 文本文件；LFS（二进制）暂不支持，相关请求返回 `501`。
+
+### 检查仓库是否存在
+
+```
+GET /api/v1/agents/{path}/{name}
+```
+
+存在返回 `{success, data:{Path, Name, Framework, Revision, UpdatedAt}}`，否则 `404`。
+
+### 创建仓库
+
+```
+POST /api/v1/agents
+```
+
+请求体：`{"Path": "...", "Name": "...", "Framework": "QwenPaw", "Visibility": "public"}`。已存在返回 `409`。
+
+### 上传文件 — 获取 LFS 上传地址
+
+```
+POST /api/v1/repos/agents/{path}/{name}/info/lfs/objects/batch
+```
+
+当前返回 `501`（暂不支持二进制/LFS）。请用 `commit` 上传 `type:"normal"` 的文本文件。
+
+### 提交文件（Commit）
+
+```
+POST /api/v1/repos/agents/{path}/{name}/commit/master
+```
+
+请求体：`{"commit_message": "...", "actions": [{"action": "update|delete", "path": "SOUL.md", "type": "normal", "content": "<base64>", "encoding": "base64"}]}`。`type:"lfs"` 返回 `501`，非法 base64 返回 `400`，提交成功后 `revision` 自增。
+
+### 获取仓库文件列表
+
+```
+GET /api/v1/agents/{path}/{name}/repo/files?Root=&Recursive=true&PageNumber=1&PageSize=100
+```
+
+返回 `{success, data:{Files:[{Path, Name, Type, Size}], Total, PageNumber, PageSize}}`。
+
+### 获取文件下载
+
+```
+GET /api/v1/agents/{path}/{name}/repo?FilePath=SOUL.md
+```
+
+返回 `{success, data:{Path, Size, Encoding:"base64", Content:"<base64>"}}`，文件不存在返回 `404`。
 
 ---
 

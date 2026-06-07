@@ -39,6 +39,8 @@ HarnessHub 是 Ultron 的个人工作空间同步与共享模块，支持在多�
 | nanobot | `~/.nanobot/workspace/` | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, memory/*.md, skills/*/* |
 | openclaw | `~/.openclaw/workspace/` | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, memory/*.md, skills/*/* |
 | hermes | `~/.hermes/` | config.yaml, SOUL.md, memories/*.md, skills/*/* |
+| qwenpaw | `~/.qwenpaw/workspaces/default/` | AGENTS.md, SOUL.md, PROFILE.md, BOOTSTRAP.md, MEMORY.md, HEARTBEAT.md, memory/*.md, skills/*/* |
+| openhuman | `~/.openhuman/workspace/` | SOUL.md, IDENTITY.md, USER.md, PROFILE.md, MEMORY.md, HEARTBEAT.md, wiki/*.md, skills/*/* |
 
 所有产品均**排除**：`.env`、`auth.json`、`sessions/`、`logs/`、隐藏文件。
 
@@ -196,6 +198,36 @@ ALLOWLIST_REGISTRY["myproduct"] = MyProductAllowlist
 | `skills/*/SKILL.md` | 技能定义 |
 | `skills/*/_meta.json` | 技能元数据 |
 | `skills/*/scripts/*` | 技能脚本 |
+
+### qwenpaw
+
+工作空间根目录：`~/.qwenpaw/workspaces/default`。
+
+| 模式 | 说明 |
+|---|---|
+| `AGENTS.md` | Agent 工作流程与规则 |
+| `SOUL.md` | 核心人格 |
+| `PROFILE.md` | 身份 + 用户资料 |
+| `BOOTSTRAP.md` | 首次引导文件（引导完成后自动删除） |
+| `MEMORY.md` | 长期记忆 |
+| `HEARTBEAT.md` | 周期任务 |
+| `memory/*.md` | 每日记忆文件 |
+| `skills/*/SKILL.md`、`skills/*/_meta.json`、`skills/*/scripts/*` | 技能 |
+
+### openhuman
+
+工作空间根目录：`~/.openhuman/workspace`。
+
+| 模式 | 说明 |
+|---|---|
+| `SOUL.md` | 核心人格 |
+| `IDENTITY.md` | 使命与价值观 |
+| `USER.md` | 用户画像 |
+| `PROFILE.md` | onboarding 富化的用户资料 |
+| `MEMORY.md` | 长期记忆摘要 |
+| `HEARTBEAT.md` | 周期任务 |
+| `wiki/*.md`、`wiki/summaries/*.md`、`wiki/notes/*.md` | Obsidian 记忆库 |
+| `skills/*/SKILL.md`、`skills/*/_meta.json`、`skills/*/scripts/*` | 技能 |
 
 ## 存储与 Bundle 格式
 

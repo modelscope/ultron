@@ -15,14 +15,16 @@ const ULTRON_SKILL_PACKAGE_TREE = `ultron-1.0.0/
     ├── ultron_client.py
     └── memory_sync.py`;
 
-type AgentChoice = 'openclaw' | 'nanobot' | 'hermes';
+type AgentChoice = 'openclaw' | 'nanobot' | 'hermes' | 'qwenpaw' | 'openhuman';
 
-const AGENT_ORDER: AgentChoice[] = ['openclaw', 'nanobot', 'hermes'];
+const AGENT_ORDER: AgentChoice[] = ['openclaw', 'nanobot', 'hermes', 'qwenpaw', 'openhuman'];
 
 const AGENT_LABEL: Record<AgentChoice, string> = {
   openclaw: 'OpenClaw',
   nanobot: 'Nanobot',
   hermes: 'Hermes',
+  qwenpaw: 'QwenPaw',
+  openhuman: 'OpenHuman',
 };
 
 function copyCommandForAgent(agent: AgentChoice): string {
@@ -33,6 +35,10 @@ function copyCommandForAgent(agent: AgentChoice): string {
       return 'cp -r ./ultron-1.0.0 ~/.nanobot/workspace/skills/';
     case 'hermes':
       return 'mkdir -p ~/.hermes/skills && cp -r ./ultron-1.0.0 ~/.hermes/skills/';
+    case 'qwenpaw':
+      return 'mkdir -p ~/.qwenpaw/workspaces/default/skills && cp -r ./ultron-1.0.0 ~/.qwenpaw/workspaces/default/skills/';
+    case 'openhuman':
+      return 'mkdir -p ~/.openhuman/workspace/skills && cp -r ./ultron-1.0.0 ~/.openhuman/workspace/skills/';
     default:
       return 'cp -r ./ultron-1.0.0 ~/.nanobot/workspace/skills/';
   }
