@@ -185,6 +185,29 @@ class TestResolveTargetPath(unittest.TestCase):
         result = _resolve_target_path("nanobot", "memory/HISTORY.md", "hermes")
         self.assertIsNone(result)
 
+    def test_qwenpaw_soul_md(self):
+        self.assertEqual(_resolve_target_path("qwenpaw", "SOUL.md", "openhuman"), "SOUL.md")
+        self.assertEqual(_resolve_target_path("nanobot", "SOUL.md", "qwenpaw"), "SOUL.md")
+
+    def test_openhuman_user_md(self):
+        # openhuman USER.md <-> nanobot/openclaw USER.md, hermes memories/USER.md
+        self.assertEqual(_resolve_target_path("openhuman", "USER.md", "nanobot"), "USER.md")
+        self.assertEqual(_resolve_target_path("openhuman", "USER.md", "hermes"), "memories/USER.md")
+
+    def test_identity_openclaw_openhuman(self):
+        self.assertEqual(_resolve_target_path("openclaw", "IDENTITY.md", "openhuman"), "IDENTITY.md")
+        # qwenpaw has no IDENTITY concept
+        self.assertIsNone(_resolve_target_path("openclaw", "IDENTITY.md", "qwenpaw"))
+
+    def test_profile_qwenpaw_openhuman(self):
+        self.assertEqual(_resolve_target_path("qwenpaw", "PROFILE.md", "openhuman"), "PROFILE.md")
+        # nanobot has no PROFILE concept
+        self.assertIsNone(_resolve_target_path("qwenpaw", "PROFILE.md", "nanobot"))
+
+    def test_memory_cross_new_products(self):
+        self.assertEqual(_resolve_target_path("openhuman", "MEMORY.md", "qwenpaw"), "MEMORY.md")
+        self.assertEqual(_resolve_target_path("qwenpaw", "MEMORY.md", "nanobot"), "memory/MEMORY.md")
+
 
 class TestMergeResources(unittest.TestCase):
     def test_same_product_imports_directly(self):
@@ -248,6 +271,100 @@ class TestMergeResources(unittest.TestCase):
         )
         self.assertIn("SOUL.md", result.merged_files)
         self.assertIn("user identity", result.merged_files["SOUL.md"])
+
+    def test_mutually_exclusive_content_into_catch_all(self):
+        # openclaw BOOTSTRAP.md has no hermes equivalent -> user diff lands in
+        # hermes catch-all (SOUL.md, since hermes has no AGENTS.md).
+        incoming = {
+            "SOUL.md": "## Core\nmy soul",
+            "BOOTSTRAP.md": "default line\nMY CUSTOM STEP",
+        }
+        source_defaults = {
+            "SOUL.md": "## Core\ndefault soul",
+            "BOOTSTRAP.md": "default line",
+        }
+        target_defaults = {"SOUL.md": "## Core\ndefault soul"}
+        result = merge_resources(
+            incoming=incoming,
+            source_product="openclaw",
+            target_product="hermes",
+            source_defaults=source_defaults,
+            target_defaults=target_defaults,
+        )
+        self.assertNotIn("BOOTSTRAP.md", result.merged_files)
+        self.assertIn("MY CUSTOM STEP", result.merged_files["SOUL.md"])
+        self.assertIn("## Imported from openclaw BOOTSTRAP.md", result.merged_files["SOUL.md"])
+
+    def test_mutually_exclusive_uses_agents_md_when_available(self):
+        # nanobot memory/HISTORY.md is data (memory/) -> kept as-is, not overflow.
+        # A non-data product-only file overflows into AGENTS.md for qwenpaw.
+        incoming = {"TOOLS.md": "default tools\nMY TOOL NOTE"}
+        source_defaults = {"TOOLS.md": "default tools"}
+        target_defaults = {"AGENTS.md": "## Red Lines\nx", "SOUL.md": "y"}
+        result = merge_resources(
+            incoming=incoming,
+            source_product="nanobot",
+            target_product="qwenpaw",  # no TOOLS, has AGENTS.md
+            source_defaults=source_defaults,
+            target_defaults=target_defaults,
+        )
+        self.assertIn("MY TOOL NOTE", result.merged_files["AGENTS.md"])
+        self.assertNotIn("TOOLS.md", result.merged_files)
+
+    def test_mutually_exclusive_no_user_changes_skipped(self):
+        # File equals its source default -> no diff -> skipped, not written.
+        incoming = {"BOOTSTRAP.md": "default line"}
+        source_defaults = {"BOOTSTRAP.md": "default line"}
+        target_defaults = {"SOUL.md": "soul"}
+        result = merge_resources(
+            incoming=incoming,
+            source_product="openclaw",
+            target_product="hermes",
+            source_defaults=source_defaults,
+            target_defaults=target_defaults,
+        )
+        self.assertNotIn("BOOTSTRAP.md", result.merged_files)
+        self.assertNotIn("Imported from", result.merged_files.get("SOUL.md", ""))
+        skip_actions = [a for a in result.actions if a.action == "skip"]
+        self.assertTrue(skip_actions)
+
+    def test_data_files_kept_as_is(self):
+        # memory/ and wiki/ files have no cross-product mapping but are data,
+        # so they are imported as-is rather than flattened into a persona file.
+        incoming = {"memory/HISTORY.md": "raw log\nNEW EVENT"}
+        result = merge_resources(
+            incoming=incoming,
+            source_product="nanobot",
+            target_product="hermes",
+            source_defaults={"memory/HISTORY.md": "raw log"},
+            target_defaults={"SOUL.md": "soul"},
+        )
+        self.assertIn("memory/HISTORY.md", result.merged_files)
+        self.assertNotIn("Imported from", result.merged_files.get("SOUL.md", ""))
+
+    def test_cross_product_new_product_migration(self):
+        # qwenpaw -> openhuman: SOUL merges, PROFILE maps directly.
+        incoming = {
+            "SOUL.md": "## Core Truths\nmy custom soul\n",
+            "PROFILE.md": "default profile\nMY NAME IS ZED\n",
+        }
+        source_defaults = {
+            "SOUL.md": "## Core Truths\ndefault soul\n",
+            "PROFILE.md": "default profile\n",
+        }
+        target_defaults = {
+            "SOUL.md": "## Core Truths\ndefault soul\n",
+            "PROFILE.md": "default profile\n",
+        }
+        result = merge_resources(
+            incoming=incoming,
+            source_product="qwenpaw",
+            target_product="openhuman",
+            source_defaults=source_defaults,
+            target_defaults=target_defaults,
+        )
+        self.assertIn("my custom soul", result.merged_files["SOUL.md"])
+        self.assertIn("MY NAME IS ZED", result.merged_files["PROFILE.md"])
 
     def test_returns_full_merge_result(self):
         result = merge_resources(

@@ -203,6 +203,36 @@ Same as nanobot (shared workspace layout).
 | `skills/*/_meta.json` | Skill metadata |
 | `skills/*/scripts/*` | Skill scripts |
 
+### qwenpaw
+
+Workspace root: `~/.qwenpaw/workspaces/default`.
+
+| Pattern | Description |
+|---------|-------------|
+| `AGENTS.md` | Agent instructions |
+| `SOUL.md` | Persona |
+| `PROFILE.md` | Identity + user profile |
+| `BOOTSTRAP.md` | First-run bootstrap (auto-removed) |
+| `MEMORY.md` | Long-term memory |
+| `HEARTBEAT.md` | Scheduled tasks |
+| `memory/*.md` | Daily memory files |
+| `skills/*/SKILL.md`, `skills/*/_meta.json`, `skills/*/scripts/*` | Skills |
+
+### openhuman
+
+Workspace root: `~/.openhuman/workspace`.
+
+| Pattern | Description |
+|---------|-------------|
+| `SOUL.md` | Persona |
+| `IDENTITY.md` | Mission & values |
+| `USER.md` | User profile |
+| `PROFILE.md` | Onboarding-enriched profile |
+| `MEMORY.md` | Long-term memory summary |
+| `HEARTBEAT.md` | Periodic tasks |
+| `wiki/*.md`, `wiki/summaries/*.md`, `wiki/notes/*.md` | Obsidian memory vault |
+| `skills/*/SKILL.md`, `skills/*/_meta.json`, `skills/*/scripts/*` | Skills |
+
 ## Storage and bundle formats
 
 **Profile (table `harness_profiles`)**

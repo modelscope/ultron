@@ -162,8 +162,74 @@ class HermesWorkspaceAllowlist(ClawWorkspaceAllowlist):
         ]
 
 
+class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
+    """Allowlist for the QwenPaw agent workspace.
+
+    QwenPaw stores per-agent workspaces under ``~/.qwenpaw/workspaces/{id}``;
+    the default agent lives in ``workspaces/default``.
+    """
+
+    @property
+    def product_name(self) -> str:
+        return "qwenpaw"
+
+    @property
+    def workspace_root(self) -> Path:
+        return Path.home() / ".qwenpaw" / "workspaces" / "default"
+
+    @property
+    def patterns(self) -> List[str]:
+        return [
+            "AGENTS.md",
+            "SOUL.md",
+            "PROFILE.md",
+            "BOOTSTRAP.md",
+            "MEMORY.md",
+            "HEARTBEAT.md",
+            "memory/*.md",
+            "skills/*/SKILL.md",
+            "skills/*/_meta.json",
+            "skills/*/scripts/*",
+        ]
+
+
+class OpenhumanWorkspaceAllowlist(ClawWorkspaceAllowlist):
+    """Allowlist for the OpenHuman agent workspace.
+
+    OpenHuman keeps its hidden workspace at ``~/.openhuman/workspace`` with an
+    Obsidian-style ``wiki/`` memory vault alongside the persona files.
+    """
+
+    @property
+    def product_name(self) -> str:
+        return "openhuman"
+
+    @property
+    def workspace_root(self) -> Path:
+        return Path.home() / ".openhuman" / "workspace"
+
+    @property
+    def patterns(self) -> List[str]:
+        return [
+            "SOUL.md",
+            "IDENTITY.md",
+            "USER.md",
+            "PROFILE.md",
+            "MEMORY.md",
+            "HEARTBEAT.md",
+            "wiki/*.md",
+            "wiki/summaries/*.md",
+            "wiki/notes/*.md",
+            "skills/*/SKILL.md",
+            "skills/*/_meta.json",
+            "skills/*/scripts/*",
+        ]
+
+
 ALLOWLIST_REGISTRY: Dict[str, Type[ClawWorkspaceAllowlist]] = {
     "nanobot": NanobotWorkspaceAllowlist,
     "openclaw": OpenclawWorkspaceAllowlist,
     "hermes": HermesWorkspaceAllowlist,
+    "qwenpaw": QwenpawWorkspaceAllowlist,
+    "openhuman": OpenhumanWorkspaceAllowlist,
 }

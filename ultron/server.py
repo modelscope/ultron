@@ -14,6 +14,7 @@ from ultron.api.routers import auth as auth_router
 from ultron.api.routers import dashboard as dashboard_router
 from ultron.api.routers import harness as harness_router
 from ultron.api.routers import memory as memory_router
+from ultron.api.routers import repo as repo_router
 from ultron.api.routers import skills as skills_router
 from ultron.api.routers import system as system_router
 from ultron.core.logging import setup_logging, set_trace_id, log_event
@@ -145,6 +146,7 @@ app.include_router(memory_router.router)
 app.include_router(skills_router.router)
 app.include_router(auth_router.router)
 app.include_router(harness_router.router)
+app.include_router(repo_router.router)
 app.include_router(dashboard_router.router)
 
 if __name__ == "__main__":

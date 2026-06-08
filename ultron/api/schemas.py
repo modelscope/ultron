@@ -100,3 +100,48 @@ class DeleteShareRequest(BaseModel):
 
 class DeleteAgentRequest(BaseModel):
     agent_id: str = Field(..., description="Agent/terminal identifier")
+
+
+# ---- Repository API (ModelScope-hub style, /api/v1/agents/*) ----
+
+
+class CreateRepoRequest(BaseModel):
+    """Create an agent repository. Maps to a (user_id, agent_id) harness profile."""
+
+    Path: str = Field(..., description="Repo path (user/org); must match the caller")
+    Name: str = Field(..., description="Repo name; stored as agent_id")
+    Framework: str = Field(
+        ..., description="Framework/product, e.g. OpenClaw / QwenPaw / nanobot"
+    )
+    Visibility: str = Field("public", description="Visibility: public / private")
+
+
+class LfsObject(BaseModel):
+    oid: str = Field(..., description="File SHA256 hash")
+    size: int = Field(..., description="File size in bytes")
+
+
+class LfsBatchRequest(BaseModel):
+    operation: str = Field("upload", description="Fixed value: upload")
+    objects: List[LfsObject] = Field(..., description="File object list")
+
+
+class CommitAction(BaseModel):
+    action: str = Field(..., description="Operation: update / delete")
+    path: str = Field(..., description="File path within the repo")
+    type: str = Field(
+        "normal", description="File type: normal (regular) / lfs (large)"
+    )
+    size: int = Field(0, description="File size in bytes")
+    sha256: str = Field("", description="SHA256 (required for lfs, may be empty)")
+    content: str = Field(
+        "", description="Content: base64 for normal files, empty for lfs"
+    )
+    encoding: str = Field(
+        "", description="Encoding: base64 for normal files, empty for lfs"
+    )
+
+
+class CommitRequest(BaseModel):
+    commit_message: str = Field(..., description="Commit message")
+    actions: List[CommitAction] = Field(..., description="File operation list")

@@ -559,7 +559,7 @@ Short-code alias for share export. Returns a bash install script.
 GET /harness/defaults/{product}
 ```
 
-Returns default workspace files for a product (`nanobot`, `openclaw`, `hermes`).
+Returns default workspace files for a product (`nanobot`, `openclaw`, `hermes`, `qwenpaw`, `openhuman`).
 
 **Response:**
 
@@ -570,6 +570,33 @@ Returns default workspace files for a product (`nanobot`, `openclaw`, `hermes`).
     "files": {"SOUL.md": "...", "AGENTS.md": "..."}
 }
 ```
+
+---
+
+## Repository API (ModelScope-hub style, `/api/v1/agents/*`)
+
+A unified, ModelScope-hub-style repository surface for getting and uploading the
+harness information Ultron already stores. It is an adapter over the existing
+harness storage:
+
+| Repo concept | Maps to Ultron |
+|---|---|
+| `:Path` (user/org) | `user_id` (the authenticated caller; must match) |
+| `:Name` | `agent_id` |
+| `Framework` | `product` (OpenClaw / QwenPaw / nanobot …) |
+| repo files | `harness_profiles.resources_json` (`{rel_path: content}`) |
+
+All endpoints require `Authorization: Bearer <JWT>`. **Note:** the underlying
+store is UTF-8 text only; LFS (binary) is not supported yet and returns `501`.
+
+| Method & Path | Description |
+|---|---|
+| `GET /api/v1/agents/{path}/{name}` | Check repo exists → `{Path, Name, Framework, Revision, UpdatedAt}` or `404` |
+| `POST /api/v1/agents` | Create repo. Body `{Path, Name, Framework, Visibility}`; `409` if it exists |
+| `POST /api/v1/repos/agents/{path}/{name}/info/lfs/objects/batch` | LFS upload address — `501` (binary unsupported) |
+| `POST /api/v1/repos/agents/{path}/{name}/commit/master` | Commit. Body `{commit_message, actions[]}`; `type:"normal"` base64 text, `type:"lfs"` → `501`, bad base64 → `400` |
+| `GET /api/v1/agents/{path}/{name}/repo/files` | List files. Query `Root/Recursive/PageNumber/PageSize` |
+| `GET /api/v1/agents/{path}/{name}/repo?FilePath=...` | Download a file (base64 content) or `404` |
 
 ---
 

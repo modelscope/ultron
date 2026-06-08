@@ -129,7 +129,7 @@ const en: Dict = {
       uploadFailed: 'Upload failed',
       agentId: 'Agent ID',
       alertUnrecognized:
-        'Unrecognized workspace folder.\nPlease select ~/.nanobot, ~/.openclaw, or ~/.hermes',
+        'Unrecognized workspace folder.\nPlease select ~/.nanobot, ~/.openclaw, ~/.hermes, ~/.qwenpaw, or ~/.openhuman',
       alertNoFiles: 'No files selected',
       input:
         'The local folder for your product.',
@@ -363,10 +363,10 @@ const zh: Dict = {
       uploadFailed: '上传失败',
       agentId: 'Agent ID',
       alertUnrecognized:
-        '无法识别的工作区目录。\n请选择 ~/.nanobot、~/.openclaw 或 ~/.hermes',
+        '无法识别的工作区目录。\n请选择 ~/.nanobot、~/.openclaw、~/.hermes、~/.qwenpaw 或 ~/.openhuman',
       alertNoFiles: '未选择文件',
       input:
-        '对应产品的本地目录（例如 ~/.nanobot、~/.openclaw、~/.hermes）。',
+        '对应产品的本地目录（例如 ~/.nanobot、~/.openclaw、~/.hermes、~/.qwenpaw、~/.openhuman）。',
       output: '新的 agent_id（UUID）、该工作区在服务端保存的文件。',
     },
     profile: {
@@ -435,7 +435,7 @@ const zh: Dict = {
       warnOverwrite:
         '导入会覆盖所选产品在本机的工作区。安装脚本在写入前会把当前目录完整备份到 ~/.ultron/harness-import-backups/，结束后会在终端打印对应的恢复命令。',
       runInTerminal: '在终端中执行：',
-      input: '分享短码，以及导入的目标产品（nanobot / openclaw / hermes）。',
+      input: '分享短码，以及导入的目标产品（nanobot / openclaw / hermes / qwenpaw / openhuman）。',
       output: '可在本机执行的 curl | bash 一键导入命令。',
     },
   },
