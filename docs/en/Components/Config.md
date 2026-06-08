@@ -6,7 +6,7 @@ description: UltronConfig, environment variables, and field reference
 
 # Configuration
 
-Ultron uses the `UltronConfig` dataclass for configuration. **`ULTRON_*` environment variables** supply defaults for each field; explicit arguments to `UltronConfig(...)` **override** the environment. The LLM uses an OpenAI-compatible surface (`llm_provider`, `llm_model`, `llm_base_url`, `llm_api_key`). Embeddings are selected by `embedding_backend` (`dashscope` or `local`); `dashscope_api_key` can share `DASHSCOPE_API_KEY` with the LLM and is written to `os.environ` on `Ultron(...)` init when set. `llm_api_key` resolves in order: `ULTRON_API_KEY` → `ULTRON_LLM_API_KEY` → `OPENAI_API_KEY` → `DASHSCOPE_API_KEY`.
+Ultron uses the `UltronConfig` dataclass for configuration. **`ULTRON_*` environment variables** supply defaults for each field; explicit arguments to `UltronConfig(...)` **override** the environment. The LLM uses an OpenAI-compatible surface (`llm_provider`, `llm_model`, `llm_base_url`, `llm_api_key`). Embeddings are selected by `embedding_backend` (`dashscope`, `openai`, or `local`); the `openai` backend talks to any OpenAI-compatible `/embeddings` endpoint (Zhipu/GLM, OpenAI, vLLM/TEI, ...) via `embedding_base_url`/`embedding_api_key`. `dashscope_api_key` can share `DASHSCOPE_API_KEY` with the LLM and is written to `os.environ` on `Ultron(...)` init when set. `llm_api_key` resolves in order: `ULTRON_API_KEY` → `ULTRON_LLM_API_KEY` → `OPENAI_API_KEY` → `DASHSCOPE_API_KEY`.
 
 On first import of `ultron.config` (or `import ultron`), `load_ultron_dotenv()` reads key/value pairs from `~/.ultron/.env` into `os.environ` (`override=False`).
 
@@ -49,7 +49,9 @@ ultron = Ultron(config=config)
 |-------|------|---------|-------------|
 | `embedding_model` | str | `text-embedding-v4` | DashScope TextEmbedding model name |
 | `embedding_dimension` | int | `1024` | Vector dimension (refined by the API after the first call) |
-| `embedding_backend` | str | `dashscope` | Embedding backend: `dashscope` or `local`; a single service data directory may use only one backend/model combination |
+| `embedding_backend` | str | `dashscope` | Embedding backend: `dashscope`, `openai`, or `local`; a single service data directory may use only one backend/model combination |
+| `embedding_base_url` | str | falls back to `ULTRON_BASE_URL` | `openai` backend only: OpenAI-compatible `/embeddings` root URL; env `ULTRON_EMBEDDING_BASE_URL` |
+| `embedding_api_key` | str | falls back to `ULTRON_API_KEY` / `OPENAI_API_KEY` | `openai` backend only: embedding service API key; env `ULTRON_EMBEDDING_API_KEY` |
 
 ### LLM configuration
 
@@ -177,6 +179,8 @@ HTTP logging: see [Installation](../GetStarted/Installation.md) (`ULTRON_LOG_LEV
 | `ULTRON_EMBEDDING_BACKEND` | `embedding_backend` |
 | `ULTRON_EMBEDDING_MODEL` | `embedding_model` |
 | `ULTRON_EMBEDDING_DIMENSION` | `embedding_dimension` |
+| `ULTRON_EMBEDDING_BASE_URL` | `embedding_base_url` |
+| `ULTRON_EMBEDDING_API_KEY` | `embedding_api_key` |
 | `ULTRON_CONVERSATION_EXTRACT_WINDOW_TOKENS` | `conversation_extract_window_tokens` |
 | `ULTRON_TRAJECTORY_MEMORY_SCORE_THRESHOLD` | `trajectory_memory_score_threshold` |
 | `ULTRON_TRAJECTORY_SFT_SCORE_THRESHOLD` | `trajectory_sft_score_threshold` |

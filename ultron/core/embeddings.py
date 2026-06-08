@@ -17,8 +17,10 @@ except ImportError:
 
 class EmbeddingService:
     """
-    Embedding client with two backends:
+    Embedding client with three backends:
     - dashscope: default TextEmbedding API, requires DASHSCOPE_API_KEY.
+    - openai: any OpenAI-compatible /embeddings endpoint (OpenAI, Zhipu/GLM,
+      local vLLM/TEI, ...), configured via base_url + api_key + model_name.
     - local: sentence-transformers model loaded locally.
 
     Raises RuntimeError when required dependency/key is missing or backend call fails.
@@ -32,11 +34,14 @@ class EmbeddingService:
         *,
         embedding_dimension_hint: int = 1024,
         request_timeout_seconds: int = 300,
+        base_url: str = "",
+        api_key: str = "",
     ):
         self._backend = (backend or "dashscope").strip().lower()
-        if self._backend not in {"dashscope", "local"}:
+        if self._backend not in {"dashscope", "local", "openai"}:
             raise RuntimeError(
-                f"unsupported embedding backend: {self._backend}, expected dashscope or local"
+                f"unsupported embedding backend: {self._backend}, "
+                "expected dashscope, openai or local"
             )
 
         self.model_name = model_name
@@ -44,14 +49,45 @@ class EmbeddingService:
         env_dim = os.environ.get("ULTRON_EMBEDDING_DIMENSION", "").strip()
         self._dimension = int(env_dim) if env_dim else int(embedding_dimension_hint)
         self._local_model = None
+        self._base_url = (base_url or "").strip()
+        self._api_key = (api_key or "").strip()
+        self._openai_client = None
 
         if self._backend == "dashscope":
             if not HAS_DASHSCOPE:
                 raise RuntimeError(
                     "dashscope is not installed; run: pip install dashscope"
                 )
+        elif self._backend == "openai":
+            self._init_openai_client()
         else:
             self._init_local_model()
+
+    def _init_openai_client(self) -> None:
+        try:
+            from openai import OpenAI
+        except ImportError as e:
+            raise RuntimeError(
+                "openai is not installed; run: pip install openai"
+            ) from e
+        if not self._base_url:
+            raise RuntimeError(
+                "openai embedding backend requires a base_url "
+                "(set ULTRON_EMBEDDING_BASE_URL)"
+            )
+        if not self._api_key:
+            raise RuntimeError(
+                "openai embedding backend requires an api key "
+                "(set ULTRON_EMBEDDING_API_KEY)"
+            )
+        try:
+            self._openai_client = OpenAI(
+                api_key=self._api_key,
+                base_url=self._base_url,
+                timeout=self._request_timeout_seconds,
+            )
+        except Exception as e:
+            raise RuntimeError(f"failed to init OpenAI-compatible client: {e}") from e
 
     def _init_local_model(self) -> None:
         if not HAS_SENTENCE_TRANSFORMERS:
@@ -123,6 +159,40 @@ class EmbeddingService:
             )
         return rows
 
+    def _embed_openai(self, inputs: List[str]) -> List[List[float]]:
+        if not inputs:
+            return []
+        assert self._openai_client is not None
+        try:
+            resp = self._openai_client.embeddings.create(
+                model=self.model_name,
+                input=inputs,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"OpenAI-compatible embedding call failed: {e}"
+            ) from e
+
+        data = getattr(resp, "data", None) or []
+        if not data:
+            raise RuntimeError("OpenAI-compatible embedding response has no data")
+
+        rows: List[List[float]] = []
+        for item in data:
+            vec = getattr(item, "embedding", None)
+            if vec is None and isinstance(item, dict):
+                vec = item.get("embedding")
+            if not vec:
+                raise RuntimeError("OpenAI-compatible embedding returned an empty row")
+            rows.append([float(x) for x in vec])
+            self._dimension = len(rows[-1])
+
+        if len(rows) != len(inputs):
+            raise RuntimeError(
+                f"embedding count mismatch: got {len(rows)}, expected {len(inputs)}"
+            )
+        return rows
+
     def embed_text(self, text: str) -> List[float]:
         if not text or not text.strip():
             raise ValueError("cannot embed empty text")
@@ -134,6 +204,11 @@ class EmbeddingService:
             vec = [float(x) for x in rows[0]]
             self._dimension = len(vec)
             return vec
+        if self._backend == "openai":
+            rows = self._embed_openai([text])
+            if not rows:
+                raise RuntimeError("OpenAI-compatible embedding returned no vectors")
+            return rows[0]
         rows = self._embed_dashscope([text])
         if not rows:
             raise RuntimeError("DashScope TextEmbedding returned no vectors")
@@ -150,6 +225,8 @@ class EmbeddingService:
             if out:
                 self._dimension = len(out[0])
             return out
+        if self._backend == "openai":
+            return self._embed_openai(cleaned)
         return self._embed_dashscope(cleaned)
 
     @staticmethod
@@ -189,6 +266,8 @@ class EmbeddingService:
     def is_available(self) -> bool:
         if self._backend == "local":
             return self._local_model is not None
+        if self._backend == "openai":
+            return self._openai_client is not None and bool(self._api_key)
         return bool(os.environ.get("DASHSCOPE_API_KEY", "").strip()) and HAS_DASHSCOPE
 
     def get_model_info(self) -> dict:
@@ -197,6 +276,7 @@ class EmbeddingService:
             "model_name": self.model_name,
             "dimension": self._dimension,
             "is_available": self.is_available(),
+            "base_url": self._base_url if self._backend == "openai" else "",
             "has_dashscope": HAS_DASHSCOPE,
             "has_sentence_transformers": HAS_SENTENCE_TRANSFORMERS,
             "has_numpy": HAS_NUMPY,
