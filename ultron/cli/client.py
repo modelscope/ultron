@@ -58,15 +58,19 @@ class UltronClient:
 
     # ---- repository ----
 
-    def check_repo(self, path: str, name: str) -> bool:
-        """True if the repo exists, False on 404."""
+    def repo_info(self, path: str, name: str) -> Optional[dict]:
+        """Repo metadata ``{Path, Name, Framework, Revision, ...}`` or None on 404."""
         try:
-            self._request("GET", f"/api/v1/agents/{path}/{name}")
-            return True
+            resp = self._request("GET", f"/api/v1/agents/{path}/{name}")
+            return resp.get("data", {})
         except ApiError as e:
             if e.status == 404:
-                return False
+                return None
             raise
+
+    def check_repo(self, path: str, name: str) -> bool:
+        """True if the repo exists, False on 404."""
+        return self.repo_info(path, name) is not None
 
     def create_repo(self, path: str, name: str, framework: str) -> dict:
         return self._request(
@@ -83,6 +87,40 @@ class UltronClient:
             f"/api/v1/repos/agents/{path}/{name}/commit/master",
             {"commit_message": message, "actions": actions},
         )
+
+    def list_repo_files(self, path: str, name: str) -> List[str]:
+        """All file paths in the repo (follows pagination)."""
+        files: List[str] = []
+        page = 1
+        while True:
+            resp = self._request(
+                "GET",
+                f"/api/v1/agents/{path}/{name}/repo/files"
+                f"?Recursive=true&PageNumber={page}&PageSize=100",
+            )
+            data = resp.get("data", {})
+            batch = data.get("Files", [])
+            files.extend(f["Path"] for f in batch)
+            if page * data.get("PageSize", 100) >= data.get("Total", len(files)):
+                break
+            page += 1
+        return files
+
+    def get_repo_file(self, path: str, name: str, file_path: str) -> str:
+        """Download one repo file, decoded to UTF-8 text."""
+        from urllib.parse import quote
+
+        resp = self._request(
+            "GET",
+            f"/api/v1/agents/{path}/{name}/repo?FilePath={quote(file_path)}",
+        )
+        data = resp.get("data", {})
+        content = data.get("Content", "")
+        if data.get("Encoding") == "base64":
+            import base64 as _b64
+
+            return _b64.b64decode(content).decode("utf-8")
+        return content
 
 
 def _extract_detail(e: "urllib.error.HTTPError") -> str:

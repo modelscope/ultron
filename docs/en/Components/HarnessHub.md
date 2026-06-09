@@ -99,6 +99,47 @@ ultron upload --framework qwenpaw --name default --local_dir ~/.qwenpaw/workspac
 ultron upload --framework qoder --list
 ```
 
+### Download (with optional format conversion)
+
+`ultron download` fetches a sub-agent's stored files and writes them into the
+local workspace. The source framework is read from the repository, so usually
+only `--name` is needed. Pass `--target` to **convert** the files into another
+framework's format on the way down (e.g. you stored an openclaw agent but want to
+run it under qwenpaw):
+
+```bash
+# Restore into the source framework's workspace
+ultron download --name reviewer
+
+# Convert openclaw -> qwenpaw and write to qwenpaw's workspace
+ultron download --name reviewer --target qwenpaw
+
+# Preview, or write somewhere else
+ultron download --name reviewer --target qwenpaw --dry-run
+ultron download --name reviewer --local_dir /tmp/restore
+```
+
+### Convert locally (no upload/download)
+
+`ultron convert` runs the same cross-framework migration **entirely on local
+files** — nothing is uploaded or downloaded. It reads the source framework's
+workspace, converts it to the target format, and writes the result (to the
+target framework's workspace by default, or `--out`):
+
+```bash
+ultron convert --from nanobot --to hermes
+ultron convert --from openclaw --to qwenpaw --local_dir ~/.openclaw/workspace --out /tmp/qwenpaw-ws
+ultron convert --from nanobot --to openhuman --dry-run
+```
+
+Conversion is powered by the same engine as the server's cross-product import
+(`merge_resources` in `ultron/services/harness/merge.py`): semantically
+equivalent files are remapped to the target's paths (e.g. nanobot `USER.md` →
+hermes `memories/USER.md`) and merged with the target's default templates. The
+five persona products (nanobot, openclaw, hermes, qwenpaw, openhuman) convert
+cleanly between each other; `qoder` has no semantic mapping yet, so its
+agent/command/rule files are carried over verbatim.
+
 `ULTRON_SERVER` / `ULTRON_TOKEN` override the stored credentials (handy in CI).
 
 A framework may host several sub-agents; the CLI uploads **one at a time** and
