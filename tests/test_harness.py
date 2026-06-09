@@ -98,6 +98,7 @@ class _TempAllowlist(ClawWorkspaceAllowlist):
     """Test allowlist pointing at a temp directory."""
 
     def __init__(self, root: Path):
+        super().__init__()
         self._root = root
 
     @property
@@ -105,7 +106,7 @@ class _TempAllowlist(ClawWorkspaceAllowlist):
         return "test"
 
     @property
-    def workspace_root(self) -> Path:
+    def default_workspace_root(self) -> Path:
         return self._root
 
     @property

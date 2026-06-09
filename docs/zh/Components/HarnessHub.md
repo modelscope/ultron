@@ -36,13 +36,16 @@ HarnessHub 是 Ultron 的个人工作空间同步与共享模块，支持在多�
 
 | 产品 | 工作空间路径 | 同步文件 |
 |---|---|---|
-| nanobot | `~/.nanobot/workspace/` | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, memory/*.md, skills/*/* |
-| openclaw | `~/.openclaw/workspace/` | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, memory/*.md, skills/*/* |
-| hermes | `~/.hermes/` | config.yaml, SOUL.md, memories/*.md, skills/*/* |
-| qwenpaw | `~/.qwenpaw/workspaces/default/` | AGENTS.md, SOUL.md, PROFILE.md, BOOTSTRAP.md, MEMORY.md, HEARTBEAT.md, memory/*.md, skills/*/* |
+| nanobot | `~/.nanobot/workspace/` | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, agents/&lt;name&gt;.md, memory/*.md, skills/*/* |
+| openclaw | `~/.openclaw/workspace/`（或 `workspace-<name>`） | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, IDENTITY.md, BOOTSTRAP.md, MEMORY.md, memory/*, skills/*/* |
+| hermes | `~/.hermes/` | SOUL.md, memories/*.md, skills/*/*（含嵌套） |
+| qwenpaw | `~/.qwenpaw/workspaces/<name>/` | AGENTS.md, SOUL.md, PROFILE.md, BOOTSTRAP.md, MEMORY.md, HEARTBEAT.md, memory/*.md, skills/*/* |
 | openhuman | `~/.openhuman/workspace/` | SOUL.md, IDENTITY.md, USER.md, PROFILE.md, MEMORY.md, HEARTBEAT.md, wiki/*.md, skills/*/* |
+| qoder | `~/.qoder/`（或项目内的 `.qoder/`） | AGENTS.md, agents/&lt;name&gt;.md, commands/*.md, rules/*.md, skills/*/* |
 
 所有产品均**排除**：`.env`、`auth.json`、`sessions/`、`logs/`、隐藏文件。
+
+不同产品的**子 agent 磁盘布局**不同——见下方 [`ultron upload` 命令行](#命令行ultron-upload) 一节的每框架对照表。
 
 ## 分享流程
 
@@ -66,6 +69,41 @@ curl -sL https://your-server/i/Ab3xK9 | bash
                                                             ▼
                                                      本地工作空间
 ```
+
+## 命令行：`ultron upload`
+
+`ultron` 命令行可以把单个子 agent 的文件上传到 agent 仓库，无需手写任何 HTTP
+请求。只要指定 **框架**（bot 类型）和 **内部子 agent 名称**，它就会按各产品的
+allowlist 自动在本地找到文件并上传；子 agent 名称同时作为仓库名（`agent_id`）。
+
+```bash
+# 1. 先登录一次（token 保存到 ~/.ultron/cli.json）
+ultron login --server http://localhost:9999 --username alice
+
+# 2. 上传一个子 agent（自动在框架默认路径下发现文件）
+ultron upload --framework qoder --name reviewer
+
+# 仅预览不上传，或指定自定义目录
+ultron upload --framework qoder --name reviewer --dry-run
+ultron upload --framework qwenpaw --name default --local_dir ~/.qwenpaw/workspaces/default
+
+# 列出某框架在本地发现的所有子 agent
+ultron upload --framework qoder --list
+```
+
+`ULTRON_SERVER` / `ULTRON_TOKEN` 环境变量可覆盖已保存的凭证（便于 CI）。
+
+一个框架可包含多个子 agent；命令行 **一次上传一个**，会收集所选子 agent 自身的
+文件 **以及共享资源**（skills、rules、commands、`AGENTS.md`）。各框架布局：
+
+| 框架 | 布局 | 子 agent `<name>` 位置 |
+|------|------|------------------------|
+| qwenpaw | 每个 agent 独立目录 | `~/.qwenpaw/workspaces/<name>` |
+| openclaw | 每个 agent 独立目录 | `~/.openclaw/workspace`（默认）/ `workspace-<name>` |
+| qoder | 单文件 + 共享 | `~/.qoder/agents/<name>.md` + 共享 `skills/`、`rules/`、`commands/`、`AGENTS.md` |
+| nanobot | 单文件 + 共享 | `~/.nanobot/workspace/agents/<name>.md` + 共享 persona/memory/skills |
+| hermes | 单 agent | `~/.hermes/`（name 仅作为仓库标识） |
+| openhuman | 单 agent | `~/.openhuman/workspace/`（name 仅作为仓库标识） |
 
 ## 架构
 
@@ -144,8 +182,14 @@ curl -fsSL https://your-server/i/<short_code>?product=nanobot | bash
 添加新的 Claw 产品支持只需：
 
 1. 在 `ultron/services/harness/allowlist.py` 中创建 `ClawWorkspaceAllowlist` 子类
-2. 定义 `product_name`、`workspace_root`、`patterns`
-3. 注册到 `ALLOWLIST_REGISTRY`
+2. 定义 `product_name`、`default_workspace_root`、`patterns`
+3. （可选）重写 `list_agents()` 以支持多子 agent 发现
+4. 注册到 `ALLOWLIST_REGISTRY`
+
+基类是**子 agent 感知**的：构造函数接收 `agent_name`（所选子 agent）和可选的
+`local_dir` 覆盖。`default_workspace_root` 可嵌入 `self.agent_name`（每 agent 独立
+目录的产品），`patterns` 中的任意 `{name}` 占位符会用它格式化，从而只匹配所选子
+agent 的文件（单文件 + 共享的产品）。单 agent 产品忽略该参数。
 
 ```python
 class MyProductAllowlist(ClawWorkspaceAllowlist):
@@ -154,15 +198,21 @@ class MyProductAllowlist(ClawWorkspaceAllowlist):
         return "myproduct"
 
     @property
-    def workspace_root(self) -> Path:
-        return Path.home() / ".myproduct"
+    def default_workspace_root(self) -> Path:
+        # 每 agent 独立目录：嵌入子 agent 名；单 agent 则返回固定路径
+        return Path.home() / ".myproduct" / "agents" / self.agent_name
 
     @property
     def patterns(self) -> List[str]:
-        return ["config.yaml", "SOUL.md", "memory/*.md"]
+        # 单文件 + 共享示例："{name}" 会被替换为子 agent 名
+        return ["SOUL.md", "memory/*.md", "agents/{name}.md"]
 
 ALLOWLIST_REGISTRY["myproduct"] = MyProductAllowlist
 ```
+
+无论何种布局，`collect()` 都返回 `{工作空间相对路径: 文本}`，因此服务端、
+`merge.py` 与控制台共用同一套键空间。控制台用 TypeScript 复刻了同样的逻辑
+（`ultron/dashboard/src/components/harness/UploadWorkspace.tsx`），修改布局时请同步。
 
 ## 各产品文件模式详情
 
@@ -175,6 +225,7 @@ ALLOWLIST_REGISTRY["myproduct"] = MyProductAllowlist
 | `USER.md` | 用户画像 |
 | `TOOLS.md` | 工具定义 |
 | `HEARTBEAT.md` | 定时任务 |
+| `agents/{name}.md` | 所选子 agent（多 agent 布局） |
 | `memory/MEMORY.md` | 长期记忆 |
 | `memory/HISTORY.md` | 会话历史 |
 | `skills/*/SKILL.md` | 技能定义 |
@@ -186,22 +237,36 @@ ALLOWLIST_REGISTRY["myproduct"] = MyProductAllowlist
 
 ### openclaw
 
-与 nanobot 相同（共享工作空间布局）。
-
-### hermes
+每 agent 独立目录：默认 agent 在 `~/.openclaw/workspace`，命名 agent 在 `~/.openclaw/workspace-<name>`。
 
 | 模式 | 说明 |
 |---|---|
-| `config.yaml` | Agent 配置 |
+| `AGENTS.md` | Agent 指令 |
+| `SOUL.md` | Agent 人格 |
+| `USER.md` | 用户画像 |
+| `TOOLS.md` | 工具定义 |
+| `HEARTBEAT.md` | 定时任务 |
+| `IDENTITY.md` | Agent 身份卡 |
+| `BOOTSTRAP.md` | 首次引导 |
+| `MEMORY.md` | 长期记忆 |
+| `memory/*.md`、`memory/*.json` | 记忆文件 |
+| `skills/*/SKILL.md`、`skills/*/_meta.json`、`skills/*/scripts/*` | 技能 |
+
+### hermes
+
+单 agent 安装；根目录 `~/.hermes`。
+
+| 模式 | 说明 |
+|---|---|
 | `SOUL.md` | Agent 人格 |
 | `memories/*.md` | 记忆文件 |
-| `skills/*/SKILL.md` | 技能定义 |
-| `skills/*/_meta.json` | 技能元数据 |
-| `skills/*/scripts/*` | 技能脚本 |
+| `skills/*/SKILL.md`、`skills/*/DESCRIPTION.md`、`skills/*/_meta.json` | 技能定义与元数据 |
+| `skills/*/scripts/*`、`skills/*/references/*` | 技能脚本与引用 |
+| `skills/*/*/...` | 嵌套技能（同一组，深一层） |
 
 ### qwenpaw
 
-工作空间根目录：`~/.qwenpaw/workspaces/default`。
+每 agent 独立目录：`~/.qwenpaw/workspaces/<name>`（默认 agent 为 `workspaces/default`）。
 
 | 模式 | 说明 |
 |---|---|
@@ -228,6 +293,18 @@ ALLOWLIST_REGISTRY["myproduct"] = MyProductAllowlist
 | `HEARTBEAT.md` | 周期任务 |
 | `wiki/*.md`、`wiki/summaries/*.md`、`wiki/notes/*.md` | Obsidian 记忆库 |
 | `skills/*/SKILL.md`、`skills/*/_meta.json`、`skills/*/scripts/*` | 技能 |
+
+### qoder
+
+单文件 + 共享。共享根目录 `~/.qoder`（用 `--local_dir` 指向项目内的 `.qoder/` 可上传项目级配置）。一个子 agent 即一个 Markdown 文件 `agents/<name>.md`，其余文件为各子 agent 共享。
+
+| 模式 | 说明 |
+|---|---|
+| `AGENTS.md` | 共享的 agent 指令 / 记忆 |
+| `agents/{name}.md` | 所选子 agent 定义 |
+| `commands/*.md` | 自定义斜杠命令（共享） |
+| `rules/*.md` | 规则（共享） |
+| `skills/*/SKILL.md`、`skills/*/scripts/*`、`skills/*/references/*` | 技能（共享） |
 
 ## 存储与 Bundle 格式
 
@@ -317,9 +394,12 @@ Showcase 是精选的 agent 示例，支持多语言。
 
 | 产品 | 默认文件 |
 |------|----------|
-| nanobot | SOUL.md, AGENTS.md, USER.md, TOOLS.md, HEARTBEAT.md |
-| openclaw | SOUL.md, AGENTS.md, USER.md, TOOLS.md, HEARTBEAT.md |
-| hermes | config.yaml, SOUL.md |
+| nanobot | SOUL.md, AGENTS.md, USER.md, TOOLS.md, HEARTBEAT.md, memory/MEMORY.md, memory/HISTORY.md |
+| openclaw | SOUL.md, AGENTS.md, USER.md, TOOLS.md, HEARTBEAT.md, IDENTITY.md, BOOTSTRAP.md |
+| hermes | SOUL.md, memories/USER.md |
+| qwenpaw | SOUL.md, AGENTS.md, PROFILE.md, HEARTBEAT.md |
+| openhuman | SOUL.md, IDENTITY.md, USER.md, HEARTBEAT.md |
+| qoder | （无内置默认文件） |
 
 ### API
 

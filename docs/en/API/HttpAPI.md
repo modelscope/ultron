@@ -589,6 +589,10 @@ harness storage:
 All endpoints require `Authorization: Bearer <JWT>`. **Note:** the underlying
 store is UTF-8 text only; LFS (binary) is not supported yet and returns `501`.
 
+> The `ultron upload` CLI wraps these endpoints — it locates a framework
+> sub-agent's files locally and runs create-if-missing + commit for you. See
+> [HarnessHub → CLI](../Components/HarnessHub.md#cli-ultron-upload).
+
 | Method & Path | Description |
 |---|---|
 | `GET /api/v1/agents/{path}/{name}` | Check repo exists → `{Path, Name, Framework, Revision, UpdatedAt}` or `404` |
