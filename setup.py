@@ -38,6 +38,11 @@ setup(
     packages=find_packages(),
     python_requires=">=3.9",
     install_requires=_read_requirements(),
+    entry_points={
+        "console_scripts": [
+            "ultron = ultron.cli:main",
+        ],
+    },
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",

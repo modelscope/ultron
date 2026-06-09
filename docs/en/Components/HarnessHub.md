@@ -42,11 +42,16 @@ Local workspace ──sync up──▶ Ultron server ──sync down──▶ lo
 
 | Product | Workspace path | Synced files |
 |---------|----------------|--------------|
-| nanobot | `~/.nanobot/workspace/` | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, memory/*.md, skills/*/* |
-| openclaw | `~/.openclaw/workspace/` | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, memory/*.md, skills/*/* |
-| hermes | `~/.hermes/` | config.yaml, SOUL.md, memories/*.md, skills/*/* |
+| nanobot | `~/.nanobot/workspace/` | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, agents/&lt;name&gt;.md, memory/*.md, skills/*/* |
+| openclaw | `~/.openclaw/workspace/` (or `workspace-<name>`) | AGENTS.md, SOUL.md, USER.md, TOOLS.md, HEARTBEAT.md, IDENTITY.md, BOOTSTRAP.md, MEMORY.md, memory/*, skills/*/* |
+| hermes | `~/.hermes/` | SOUL.md, memories/*.md, skills/*/* (incl. nested) |
+| qwenpaw | `~/.qwenpaw/workspaces/<name>/` | AGENTS.md, SOUL.md, PROFILE.md, BOOTSTRAP.md, MEMORY.md, HEARTBEAT.md, memory/*.md, skills/*/* |
+| openhuman | `~/.openhuman/workspace/` | SOUL.md, IDENTITY.md, USER.md, PROFILE.md, MEMORY.md, HEARTBEAT.md, wiki/*.md, skills/*/* |
+| qoder | `~/.qoder/` (or a project's `.qoder/`) | AGENTS.md, agents/&lt;name&gt;.md, commands/*.md, rules/*.md, skills/*/* |
 
 All products **exclude**: `.env`, `auth.json`, `sessions/`, `logs/`, hidden files.
+
+The on-disk **sub-agent layout** differs by product — see the [`ultron upload` CLI](#cli-ultron-upload) section below for the per-framework table.
 
 ## Share flow
 
@@ -70,6 +75,44 @@ Local workspace ──sync up──▶ Ultron server ──create share──▶
                                                             ▼
                                                      Local workspace
 ```
+
+## CLI: `ultron upload`
+
+The `ultron` command uploads a single sub-agent's files to the agent repository
+without crafting any HTTP requests. Given a **framework** (bot type) and an
+**internal sub-agent name**, it locates the files on disk (using the per-product
+allowlist) and uploads them; the sub-agent name also becomes the repository name
+(`agent_id`).
+
+```bash
+# 1. Authenticate once (token saved to ~/.ultron/cli.json)
+ultron login --server http://localhost:9999 --username alice
+
+# 2. Upload one sub-agent (auto-discovers files at the framework's default path)
+ultron upload --framework qoder --name reviewer
+
+# Preview without uploading, or point at a custom directory
+ultron upload --framework qoder --name reviewer --dry-run
+ultron upload --framework qwenpaw --name default --local_dir ~/.qwenpaw/workspaces/default
+
+# List the sub-agents discovered on disk for a framework
+ultron upload --framework qoder --list
+```
+
+`ULTRON_SERVER` / `ULTRON_TOKEN` override the stored credentials (handy in CI).
+
+A framework may host several sub-agents; the CLI uploads **one at a time** and
+collects the selected sub-agent's own file **plus shared resources** (skills,
+rules, commands, `AGENTS.md`). Layouts per framework:
+
+| Framework | Layout | Sub-agent `<name>` location |
+|-----------|--------|-----------------------------|
+| qwenpaw | root-per-agent | `~/.qwenpaw/workspaces/<name>` |
+| openclaw | root-per-agent | `~/.openclaw/workspace` (default) / `workspace-<name>` |
+| qoder | file-per-agent + shared | `~/.qoder/agents/<name>.md` + shared `skills/`, `rules/`, `commands/`, `AGENTS.md` |
+| nanobot | file-per-agent + shared | `~/.nanobot/workspace/agents/<name>.md` + shared persona/memory/skills |
+| hermes | single-agent | `~/.hermes/` (name is just the repo identity) |
+| openhuman | single-agent | `~/.openhuman/workspace/` (name is just the repo identity) |
 
 ## Architecture
 
@@ -148,8 +191,15 @@ For full request bodies and response fields, see [HTTP API](../API/HttpAPI.md) a
 To add support for another Claw product:
 
 1. Subclass `ClawWorkspaceAllowlist` in `ultron/services/harness/allowlist.py`
-2. Define `product_name`, `workspace_root`, `patterns`
-3. Register it in `ALLOWLIST_REGISTRY`
+2. Define `product_name`, `default_workspace_root`, `patterns`
+3. (Optional) override `list_agents()` for multi-sub-agent discovery
+4. Register it in `ALLOWLIST_REGISTRY`
+
+The base class is **sub-agent-aware**: the constructor takes `agent_name` (the
+selected sub-agent) and an optional `local_dir` override. `default_workspace_root`
+may embed `self.agent_name` (root-per-agent products), and any `{name}`
+placeholder in `patterns` is formatted with it so only the selected sub-agent's
+file matches (file-per-agent products). Single-agent products simply ignore it.
 
 ```python
 class MyProductAllowlist(ClawWorkspaceAllowlist):
@@ -158,15 +208,22 @@ class MyProductAllowlist(ClawWorkspaceAllowlist):
         return "myproduct"
 
     @property
-    def workspace_root(self) -> Path:
-        return Path.home() / ".myproduct"
+    def default_workspace_root(self) -> Path:
+        # root-per-agent: embed the sub-agent name; or a fixed path for single-agent
+        return Path.home() / ".myproduct" / "agents" / self.agent_name
 
     @property
     def patterns(self) -> List[str]:
-        return ["config.yaml", "SOUL.md", "memory/*.md"]
+        # file-per-agent example: "{name}" is replaced with the sub-agent name
+        return ["SOUL.md", "memory/*.md", "agents/{name}.md"]
 
 ALLOWLIST_REGISTRY["myproduct"] = MyProductAllowlist
 ```
+
+`collect()` returns `{workspace_relative_path: text}` regardless of the layout,
+so the server, `merge.py`, and the dashboard all share one key space. The
+dashboard mirrors this logic in TypeScript
+(`ultron/dashboard/src/components/harness/UploadWorkspace.tsx`) — keep both in sync.
 
 ## Per-product file patterns
 
@@ -179,6 +236,7 @@ ALLOWLIST_REGISTRY["myproduct"] = MyProductAllowlist
 | `USER.md` | User profile |
 | `TOOLS.md` | Tool definitions |
 | `HEARTBEAT.md` | Scheduled tasks |
+| `agents/{name}.md` | Selected sub-agent (multi-agent layout) |
 | `memory/MEMORY.md` | Long-term memory |
 | `memory/HISTORY.md` | Session history |
 | `skills/*/SKILL.md` | Skill definition |
@@ -190,22 +248,36 @@ ALLOWLIST_REGISTRY["myproduct"] = MyProductAllowlist
 
 ### openclaw
 
-Same as nanobot (shared workspace layout).
-
-### hermes
+Root-per-agent: default agent at `~/.openclaw/workspace`, named agents at `~/.openclaw/workspace-<name>`.
 
 | Pattern | Description |
 |---------|-------------|
-| `config.yaml` | Agent config |
+| `AGENTS.md` | Agent instructions |
+| `SOUL.md` | Persona |
+| `USER.md` | User profile |
+| `TOOLS.md` | Tool definitions |
+| `HEARTBEAT.md` | Scheduled tasks |
+| `IDENTITY.md` | Agent identity card |
+| `BOOTSTRAP.md` | First-run bootstrap |
+| `MEMORY.md` | Long-term memory |
+| `memory/*.md`, `memory/*.json` | Memory files |
+| `skills/*/SKILL.md`, `skills/*/_meta.json`, `skills/*/scripts/*` | Skills |
+
+### hermes
+
+Single-agent install; root `~/.hermes`.
+
+| Pattern | Description |
+|---------|-------------|
 | `SOUL.md` | Persona |
 | `memories/*.md` | Memory files |
-| `skills/*/SKILL.md` | Skill definition |
-| `skills/*/_meta.json` | Skill metadata |
-| `skills/*/scripts/*` | Skill scripts |
+| `skills/*/SKILL.md`, `skills/*/DESCRIPTION.md`, `skills/*/_meta.json` | Skill definition + metadata |
+| `skills/*/scripts/*`, `skills/*/references/*` | Skill scripts & references |
+| `skills/*/*/...` | Nested skills (same set, one level deeper) |
 
 ### qwenpaw
 
-Workspace root: `~/.qwenpaw/workspaces/default`.
+Root-per-agent: `~/.qwenpaw/workspaces/<name>` (default agent = `workspaces/default`).
 
 | Pattern | Description |
 |---------|-------------|
@@ -232,6 +304,18 @@ Workspace root: `~/.openhuman/workspace`.
 | `HEARTBEAT.md` | Periodic tasks |
 | `wiki/*.md`, `wiki/summaries/*.md`, `wiki/notes/*.md` | Obsidian memory vault |
 | `skills/*/SKILL.md`, `skills/*/_meta.json`, `skills/*/scripts/*` | Skills |
+
+### qoder
+
+File-per-agent + shared. Shared root `~/.qoder` (point `--local_dir` at a project's `.qoder/` to upload that instead). A sub-agent is one Markdown file `agents/<name>.md`; everything else is shared across sub-agents.
+
+| Pattern | Description |
+|---------|-------------|
+| `AGENTS.md` | Shared agent instructions / memory |
+| `agents/{name}.md` | Selected sub-agent definition |
+| `commands/*.md` | Custom slash commands (shared) |
+| `rules/*.md` | Rules (shared) |
+| `skills/*/SKILL.md`, `skills/*/scripts/*`, `skills/*/references/*` | Skills (shared) |
 
 ## Storage and bundle formats
 
@@ -321,9 +405,12 @@ Each supported product includes default workspace files so new users can start q
 
 | Product | Default files |
 |---------|---------------|
-| nanobot | SOUL.md, AGENTS.md, USER.md, TOOLS.md, HEARTBEAT.md |
-| openclaw | SOUL.md, AGENTS.md, USER.md, TOOLS.md, HEARTBEAT.md |
-| hermes | config.yaml, SOUL.md |
+| nanobot | SOUL.md, AGENTS.md, USER.md, TOOLS.md, HEARTBEAT.md, memory/MEMORY.md, memory/HISTORY.md |
+| openclaw | SOUL.md, AGENTS.md, USER.md, TOOLS.md, HEARTBEAT.md, IDENTITY.md, BOOTSTRAP.md |
+| hermes | SOUL.md, memories/USER.md |
+| qwenpaw | SOUL.md, AGENTS.md, PROFILE.md, HEARTBEAT.md |
+| openhuman | SOUL.md, IDENTITY.md, USER.md, HEARTBEAT.md |
+| qoder | (no bundled defaults) |
 
 ### API
 

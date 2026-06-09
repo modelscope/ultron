@@ -297,6 +297,19 @@ uvicorn ultron.server:app --host 0.0.0.0 --port 9999
 # http://0.0.0.0:9999 — dashboard at /dashboard
 ```
 
+### Upload an agent from the command line
+
+After `pip install -e .`, the `ultron` CLI uploads a framework sub-agent to the agent repository — just name the framework and the internal sub-agent; files are located automatically:
+
+```bash
+ultron login --server http://localhost:9999 --username alice
+ultron upload --framework qoder --name reviewer        # auto-discovers files
+ultron upload --framework qoder --name reviewer --dry-run   # preview only
+ultron upload --framework qoder --list                 # list local sub-agents
+```
+
+See [HarnessHub.md](docs/en/Components/HarnessHub.md) for the per-framework file layouts.
+
 That's it. For detailed configuration, API reference, SDK usage, and project structure, see the full docs:
 
 | Topic | English | 中文 |

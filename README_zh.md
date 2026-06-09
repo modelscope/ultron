@@ -283,6 +283,19 @@ uvicorn ultron.server:app --host 0.0.0.0 --port 9999
 # http://0.0.0.0:9999 ，控制台路径为 /dashboard
 ```
 
+### 命令行上传 agent
+
+`pip install -e .` 后即可使用 `ultron` 命令行，把某框架的子 agent 上传到 agent 仓库——只需指定框架和内部子 agent 名称，文件会被自动定位：
+
+```bash
+ultron login --server http://localhost:9999 --username alice
+ultron upload --framework qoder --name reviewer        # 自动发现文件
+ultron upload --framework qoder --name reviewer --dry-run   # 仅预览
+ultron upload --framework qoder --list                 # 列出本地子 agent
+```
+
+各框架的文件布局见 [HarnessHub.md](docs/zh/Components/HarnessHub.md)。
+
 更多部署细节、API 参考、SDK 与项目结构见下表：
 
 | 主题 | 链接 |

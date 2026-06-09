@@ -1,17 +1,62 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
+"""Per-product workspace file allowlists.
+
+Each "Claw product" (agent framework) stores its files in a known on-disk
+layout. A subclass of :class:`ClawWorkspaceAllowlist` declares, for one product,
+*where* the files live (``workspace_root``) and *which* of them are portable
+(``patterns``). ``collect()`` walks the workspace and returns
+``{workspace_relative_path: text_content}``; the stored paths are always
+workspace-relative regardless of the on-disk directory model, so the server,
+``merge.py`` and the dashboard all operate on the same key space.
+
+Sub-agents
+----------
+A single installation can host several sub-agents. There are three layouts:
+
+* **root-per-agent** -- the sub-agent *is* a directory; selecting it changes
+  ``workspace_root`` (qwenpaw ``workspaces/<name>``, openclaw
+  ``workspace-<name>``).
+* **file-per-agent + shared** -- the sub-agent is one file inside a shared root,
+  collected alongside the shared resources; a ``{name}`` placeholder in
+  ``patterns`` is formatted with the sub-agent name so only the selected agent's
+  file matches (qoder ``agents/<name>.md``, nanobot).
+* **single-agent** -- one persona per install; the sub-agent name is only the
+  repository identity and does not affect file selection (hermes, openhuman).
+
+The dashboard re-implements the same root/pattern logic in TypeScript
+(``ultron/dashboard/src/components/harness/UploadWorkspace.tsx``); keep the two
+in sync when changing a layout.
+"""
 import fnmatch
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Type
 
 logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE = 1 * 1024 * 1024  # 1 MB
 
+DEFAULT_AGENT_NAME = "default"
+
 
 class ClawWorkspaceAllowlist(ABC):
-    """Abstract base for Claw-product workspace file allowlists."""
+    """Abstract base for Claw-product workspace file allowlists.
+
+    :param agent_name: the sub-agent to operate on. Used to resolve
+        ``workspace_root`` (root-per-agent products) and/or to format ``{name}``
+        placeholders in ``patterns`` (file-per-agent products). Ignored for
+        single-agent products.
+    :param local_dir: explicit workspace root override; when given, it replaces
+        the product's default ``workspace_root`` (used by ``ultron upload
+        --local_dir``).
+    """
+
+    def __init__(
+        self, agent_name: str = DEFAULT_AGENT_NAME, local_dir: Optional[Path] = None
+    ):
+        self.agent_name = agent_name or DEFAULT_AGENT_NAME
+        self._local_dir = Path(local_dir).expanduser() if local_dir else None
 
     @property
     @abstractmethod
@@ -20,16 +65,26 @@ class ClawWorkspaceAllowlist(ABC):
 
     @property
     @abstractmethod
-    def workspace_root(self) -> Path:
+    def default_workspace_root(self) -> Path:
+        """Workspace root for ``self.agent_name`` (before ``local_dir`` override)."""
         ...
 
     @property
     @abstractmethod
     def patterns(self) -> List[str]:
+        """fnmatch globs (workspace-relative); may contain ``{name}``."""
         ...
 
-    def _matches(self, rel_path: str) -> bool:
-        for pattern in self.patterns:
+    @property
+    def workspace_root(self) -> Path:
+        """Effective root: ``local_dir`` override, else the product default."""
+        return self._local_dir if self._local_dir is not None else self.default_workspace_root
+
+    def _resolved_patterns(self) -> List[str]:
+        return [p.format(name=self.agent_name) for p in self.patterns]
+
+    def _matches(self, rel_path: str, patterns: List[str]) -> bool:
+        for pattern in patterns:
             if fnmatch.fnmatch(rel_path, pattern):
                 return True
         return False
@@ -39,6 +94,7 @@ class ClawWorkspaceAllowlist(ABC):
         root = self.workspace_root
         if not root.is_dir():
             return {}
+        patterns = self._resolved_patterns()
         result: Dict[str, str] = {}
         for f in sorted(root.rglob("*")):
             if not f.is_file() or f.is_symlink():
@@ -49,7 +105,7 @@ class ClawWorkspaceAllowlist(ABC):
                 continue
             if any(part.startswith(".") for part in Path(rel).parts):
                 continue
-            if not self._matches(rel):
+            if not self._matches(rel, patterns):
                 continue
             try:
                 if f.stat().st_size > MAX_FILE_SIZE:
@@ -58,6 +114,14 @@ class ClawWorkspaceAllowlist(ABC):
             except (OSError, UnicodeDecodeError) as e:
                 logger.debug("Skip %s: %s", f, e)
         return result
+
+    def list_agents(self) -> List[str]:
+        """Discover sub-agent names available on disk.
+
+        Default: single-agent products report ``["default"]``. Root-per-agent and
+        file-per-agent products override this to enumerate their layout.
+        """
+        return [DEFAULT_AGENT_NAME]
 
     def apply(self, resources: Dict[str, str]) -> List[str]:
         """Write resource files back to the workspace. Returns list of written paths."""
@@ -75,14 +139,14 @@ class ClawWorkspaceAllowlist(ABC):
 
 
 class NanobotWorkspaceAllowlist(ClawWorkspaceAllowlist):
-    """Allowlist for the nanobot agent workspace."""
+    """Allowlist for the nanobot agent workspace (file-per-agent + shared)."""
 
     @property
     def product_name(self) -> str:
         return "nanobot"
 
     @property
-    def workspace_root(self) -> Path:
+    def default_workspace_root(self) -> Path:
         return Path.home() / ".nanobot" / "workspace"
 
     @property
@@ -93,6 +157,7 @@ class NanobotWorkspaceAllowlist(ClawWorkspaceAllowlist):
             "USER.md",
             "TOOLS.md",
             "HEARTBEAT.md",
+            "agents/{name}.md",
             "memory/MEMORY.md",
             "memory/HISTORY.md",
             "skills/*/SKILL.md",
@@ -103,17 +168,27 @@ class NanobotWorkspaceAllowlist(ClawWorkspaceAllowlist):
             "skills/*/boundaries.md",
         ]
 
+    def list_agents(self) -> List[str]:
+        return _list_agent_files(self.workspace_root / "agents")
+
 
 class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
-    """Allowlist for the OpenClaw agent workspace."""
+    """Allowlist for the OpenClaw agent workspace (root-per-agent).
+
+    The default agent lives in ``~/.openclaw/workspace``; named agents live in
+    ``~/.openclaw/workspace-<name>``.
+    """
 
     @property
     def product_name(self) -> str:
         return "openclaw"
 
     @property
-    def workspace_root(self) -> Path:
-        return Path.home() / ".openclaw" / "workspace"
+    def default_workspace_root(self) -> Path:
+        base = Path.home() / ".openclaw"
+        if self.agent_name in ("", DEFAULT_AGENT_NAME):
+            return base / "workspace"
+        return base / f"workspace-{self.agent_name}"
 
     @property
     def patterns(self) -> List[str]:
@@ -133,16 +208,27 @@ class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
             "skills/*/scripts/*",
         ]
 
+    def list_agents(self) -> List[str]:
+        base = Path.home() / ".openclaw"
+        agents: List[str] = []
+        if (base / "workspace").is_dir():
+            agents.append(DEFAULT_AGENT_NAME)
+        if base.is_dir():
+            for d in sorted(base.glob("workspace-*")):
+                if d.is_dir():
+                    agents.append(d.name[len("workspace-"):])
+        return agents or [DEFAULT_AGENT_NAME]
+
 
 class HermesWorkspaceAllowlist(ClawWorkspaceAllowlist):
-    """Allowlist for the Hermes agent workspace."""
+    """Allowlist for the Hermes agent workspace (single-agent install)."""
 
     @property
     def product_name(self) -> str:
         return "hermes"
 
     @property
-    def workspace_root(self) -> Path:
+    def default_workspace_root(self) -> Path:
         return Path.home() / ".hermes"
 
     @property
@@ -163,7 +249,7 @@ class HermesWorkspaceAllowlist(ClawWorkspaceAllowlist):
 
 
 class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
-    """Allowlist for the QwenPaw agent workspace.
+    """Allowlist for the QwenPaw agent workspace (root-per-agent).
 
     QwenPaw stores per-agent workspaces under ``~/.qwenpaw/workspaces/{id}``;
     the default agent lives in ``workspaces/default``.
@@ -174,8 +260,8 @@ class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
         return "qwenpaw"
 
     @property
-    def workspace_root(self) -> Path:
-        return Path.home() / ".qwenpaw" / "workspaces" / "default"
+    def default_workspace_root(self) -> Path:
+        return Path.home() / ".qwenpaw" / "workspaces" / self.agent_name
 
     @property
     def patterns(self) -> List[str]:
@@ -192,9 +278,16 @@ class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
             "skills/*/scripts/*",
         ]
 
+    def list_agents(self) -> List[str]:
+        base = Path.home() / ".qwenpaw" / "workspaces"
+        if not base.is_dir():
+            return [DEFAULT_AGENT_NAME]
+        agents = [d.name for d in sorted(base.iterdir()) if d.is_dir()]
+        return agents or [DEFAULT_AGENT_NAME]
+
 
 class OpenhumanWorkspaceAllowlist(ClawWorkspaceAllowlist):
-    """Allowlist for the OpenHuman agent workspace.
+    """Allowlist for the OpenHuman agent workspace (single-agent install).
 
     OpenHuman keeps its hidden workspace at ``~/.openhuman/workspace`` with an
     Obsidian-style ``wiki/`` memory vault alongside the persona files.
@@ -205,7 +298,7 @@ class OpenhumanWorkspaceAllowlist(ClawWorkspaceAllowlist):
         return "openhuman"
 
     @property
-    def workspace_root(self) -> Path:
+    def default_workspace_root(self) -> Path:
         return Path.home() / ".openhuman" / "workspace"
 
     @property
@@ -226,10 +319,51 @@ class OpenhumanWorkspaceAllowlist(ClawWorkspaceAllowlist):
         ]
 
 
+class QoderWorkspaceAllowlist(ClawWorkspaceAllowlist):
+    """Allowlist for the Qoder agent workspace (file-per-agent + shared).
+
+    Qoder keeps user-level config at ``~/.qoder`` (project-level config lives in
+    a project's ``.qoder/`` directory; point ``--local_dir`` at it to upload
+    that instead). A sub-agent is one Markdown file ``agents/<name>.md``; skills,
+    commands, rules and ``AGENTS.md`` are shared across sub-agents.
+    """
+
+    @property
+    def product_name(self) -> str:
+        return "qoder"
+
+    @property
+    def default_workspace_root(self) -> Path:
+        return Path.home() / ".qoder"
+
+    @property
+    def patterns(self) -> List[str]:
+        return [
+            "AGENTS.md",
+            "agents/{name}.md",
+            "commands/*.md",
+            "rules/*.md",
+            "skills/*/SKILL.md",
+            "skills/*/scripts/*",
+            "skills/*/references/*",
+        ]
+
+    def list_agents(self) -> List[str]:
+        return _list_agent_files(self.workspace_root / "agents")
+
+
+def _list_agent_files(agents_dir: Path) -> List[str]:
+    """Return the stems of ``*.md`` files in an ``agents/`` directory."""
+    if not agents_dir.is_dir():
+        return []
+    return sorted(f.stem for f in agents_dir.glob("*.md") if f.is_file())
+
+
 ALLOWLIST_REGISTRY: Dict[str, Type[ClawWorkspaceAllowlist]] = {
     "nanobot": NanobotWorkspaceAllowlist,
     "openclaw": OpenclawWorkspaceAllowlist,
     "hermes": HermesWorkspaceAllowlist,
     "qwenpaw": QwenpawWorkspaceAllowlist,
     "openhuman": OpenhumanWorkspaceAllowlist,
+    "qoder": QoderWorkspaceAllowlist,
 }

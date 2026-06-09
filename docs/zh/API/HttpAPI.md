@@ -606,6 +606,8 @@ GET /harness/defaults/{product}
 
 所有端点均需 `Authorization: Bearer <JWT>`。**注意**：底层存储仅支持 UTF-8 文本文件；LFS（二进制）暂不支持，相关请求返回 `501`。
 
+> `ultron upload` 命令行封装了这些端点——它会在本地定位某框架子 agent 的文件，并自动执行「不存在则创建 + 提交」。见 [HarnessHub → 命令行](../Components/HarnessHub.md#命令行ultron-upload)。
+
 ### 检查仓库是否存在
 
 ```
