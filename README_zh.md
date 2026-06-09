@@ -290,11 +290,12 @@ uvicorn ultron.server:app --host 0.0.0.0 --port 9999
 ```bash
 ultron login --server http://localhost:9999 --username alice
 ultron upload --framework qoder --name reviewer        # 自动发现文件
-ultron upload --framework qoder --name reviewer --dry-run   # 仅预览
-ultron upload --framework qoder --list                 # 列出本地子 agent
+ultron download --name reviewer                         # 还原到本地工作空间
+ultron download --name reviewer --target qwenpaw        # 下载并转换格式
+ultron convert --from nanobot --to hermes               # 纯本地格式转换
 ```
 
-各框架的文件布局见 [HarnessHub.md](docs/zh/Components/HarnessHub.md)。
+各框架的文件布局与完整命令行说明见 [HarnessHub.md](docs/zh/Components/HarnessHub.md)。
 
 更多部署细节、API 参考、SDK 与项目结构见下表：
 

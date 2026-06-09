@@ -10,7 +10,7 @@ Subcommands:
 import argparse
 import sys
 
-from .commands import cmd_login, cmd_upload
+from .commands import cmd_convert, cmd_download, cmd_login, cmd_upload
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,6 +56,66 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the files that would be uploaded without uploading.",
     )
     p_up.set_defaults(func=cmd_upload)
+
+    # ---- download ----
+    p_dl = sub.add_parser(
+        "download",
+        help="Download a sub-agent's files from the agent repository to disk.",
+    )
+    p_dl.add_argument(
+        "--name", "-n", required=True,
+        help="Repository / sub-agent name to download.",
+    )
+    p_dl.add_argument(
+        "--framework", "-f",
+        help="Source framework / bot type (default: read from the stored repository).",
+    )
+    p_dl.add_argument(
+        "--target", "-t",
+        help="Convert to this framework's format before writing (default: same as source).",
+    )
+    p_dl.add_argument(
+        "--local_dir", "-d",
+        help="Override the workspace root to write into (default: framework's path).",
+    )
+    p_dl.add_argument("--server", help="Server URL override.")
+    p_dl.add_argument("--token", help="API token override.")
+    p_dl.add_argument(
+        "--dry-run", action="store_true",
+        help="Show the files that would be written without writing.",
+    )
+    p_dl.set_defaults(func=cmd_download)
+
+    # ---- convert (local only, no network) ----
+    p_cv = sub.add_parser(
+        "convert",
+        help="Convert a local workspace from one framework's format to another.",
+    )
+    p_cv.add_argument(
+        "--from", dest="source", required=True,
+        help="Source framework / bot type to read.",
+    )
+    p_cv.add_argument(
+        "--to", dest="target", required=True,
+        help="Target framework / bot type to write.",
+    )
+    p_cv.add_argument(
+        "--name", "-n",
+        help="Sub-agent name (selects source files; default 'default').",
+    )
+    p_cv.add_argument(
+        "--local_dir", "-d",
+        help="Source workspace root to read (default: source framework's path).",
+    )
+    p_cv.add_argument(
+        "--out", "-o",
+        help="Destination directory to write (default: target framework's path).",
+    )
+    p_cv.add_argument(
+        "--dry-run", action="store_true",
+        help="Show the converted files without writing.",
+    )
+    p_cv.set_defaults(func=cmd_convert)
 
     return parser
 

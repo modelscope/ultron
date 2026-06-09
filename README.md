@@ -304,11 +304,12 @@ After `pip install -e .`, the `ultron` CLI uploads a framework sub-agent to the 
 ```bash
 ultron login --server http://localhost:9999 --username alice
 ultron upload --framework qoder --name reviewer        # auto-discovers files
-ultron upload --framework qoder --name reviewer --dry-run   # preview only
-ultron upload --framework qoder --list                 # list local sub-agents
+ultron download --name reviewer                         # restore to local workspace
+ultron download --name reviewer --target qwenpaw        # download + convert format
+ultron convert --from nanobot --to hermes               # local-only format conversion
 ```
 
-See [HarnessHub.md](docs/en/Components/HarnessHub.md) for the per-framework file layouts.
+See [HarnessHub.md](docs/en/Components/HarnessHub.md) for the per-framework file layouts and full CLI reference.
 
 That's it. For detailed configuration, API reference, SDK usage, and project structure, see the full docs:
 

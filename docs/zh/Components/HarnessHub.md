@@ -91,6 +91,42 @@ ultron upload --framework qwenpaw --name default --local_dir ~/.qwenpaw/workspac
 ultron upload --framework qoder --list
 ```
 
+### 下载（可选格式转换）
+
+`ultron download` 会拉取某子 agent 已存储的文件并写回本地工作空间。源框架会从仓库
+中读取，因此通常只需 `--name`。传入 `--target` 可在写回时把文件**转换**为另一框架的
+格式（例如你存的是 openclaw 的 agent，但想在 qwenpaw 下运行）：
+
+```bash
+# 还原到源框架的工作空间
+ultron download --name reviewer
+
+# 转换 openclaw -> qwenpaw 并写入 qwenpaw 工作空间
+ultron download --name reviewer --target qwenpaw
+
+# 预览，或写到其他位置
+ultron download --name reviewer --target qwenpaw --dry-run
+ultron download --name reviewer --local_dir /tmp/restore
+```
+
+### 本地转换（不上传/不下载）
+
+`ultron convert` 在**纯本地文件**上执行同样的跨框架迁移——不涉及任何上传或下载。它
+读取源框架的工作空间，转换为目标格式，并写出结果（默认写到目标框架的工作空间，或用
+`--out` 指定）：
+
+```bash
+ultron convert --from nanobot --to hermes
+ultron convert --from openclaw --to qwenpaw --local_dir ~/.openclaw/workspace --out /tmp/qwenpaw-ws
+ultron convert --from nanobot --to openhuman --dry-run
+```
+
+转换由与服务端跨产品导入相同的引擎驱动（`ultron/services/harness/merge.py` 的
+`merge_resources`）：语义等价的文件会被重映射到目标路径（例如 nanobot 的 `USER.md`
+→ hermes 的 `memories/USER.md`），并与目标的默认模板合并。五个人格产品（nanobot、
+openclaw、hermes、qwenpaw、openhuman）之间可干净互转；`qoder` 暂无语义映射，其
+agent/command/rule 文件会原样保留。
+
 `ULTRON_SERVER` / `ULTRON_TOKEN` 环境变量可覆盖已保存的凭证（便于 CI）。
 
 一个框架可包含多个子 agent；命令行 **一次上传一个**，会收集所选子 agent 自身的
