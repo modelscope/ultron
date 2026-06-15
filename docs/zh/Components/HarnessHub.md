@@ -91,11 +91,18 @@ ultron upload --framework qwenpaw --name default --local_dir ~/.qwenpaw/workspac
 ultron upload --framework qoder --list
 ```
 
+上传时，命令行会把该子 agent 的整个目录**打包成一个 zip**，通过
+`POST /api/v1/files/upload`（`multipart/form-data`，字段 `file` + `Path`/`Name`/
+`Framework`/`commit_message`）一次性提交。之所以用整目录快照而非逐文件提交，是因为
+只有拿到完整文件集，服务端才能推断出**删除**（哪些文件被移除），而不仅仅是更新。
+
 ### 下载（可选格式转换）
 
 `ultron download` 会拉取某子 agent 已存储的文件并写回本地工作空间。源框架会从仓库
-中读取，因此通常只需 `--name`。传入 `--target` 可在写回时把文件**转换**为另一框架的
-格式（例如你存的是 openclaw 的 agent，但想在 qwenpaw 下运行）：
+中读取，因此通常只需 `--name`。下载分两步：先通过
+`GET /api/v1/agents/{path}/{name}/repo/files` 取文件列表，再为每个文件获取下载链接并
+逐个拉取。传入 `--target` 可在写回时把文件**转换**为另一框架的格式（例如你存的是
+openclaw 的 agent，但想在 qwenpaw 下运行）：
 
 ```bash
 # 还原到源框架的工作空间

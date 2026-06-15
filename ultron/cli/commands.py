@@ -1,8 +1,9 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 """Implementations of the ``ultron`` CLI subcommands."""
-import base64
 import getpass
+import io
 import sys
+import zipfile
 from pathlib import Path
 from typing import Dict
 
@@ -47,6 +48,15 @@ def _build_allowlist(framework: str, name: str, local_dir):
     spec_cls = ALLOWLIST_REGISTRY[framework]
     local = Path(local_dir).expanduser() if local_dir else None
     return spec_cls(agent_name=name, local_dir=local)
+
+
+def _zip_resources(resources: Dict[str, str]) -> bytes:
+    """Pack ``{rel_path: text}`` into a deterministic in-memory zip."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel, content in sorted(resources.items()):
+            zf.writestr(rel, content)
+    return buf.getvalue()
 
 
 def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
@@ -116,25 +126,20 @@ def cmd_upload(args) -> int:
         if not client.check_repo(username, args.name):
             client.create_repo(username, args.name, framework)
             print(f"Created repository {username}/{args.name} (framework={framework}).")
-        actions = [
-            {
-                "action": "update",
-                "path": rel,
-                "type": "normal",
-                "size": len(content.encode("utf-8")),
-                "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-                "encoding": "base64",
-            }
-            for rel, content in sorted(resources.items())
-        ]
+        # Pack the whole sub-agent directory into one zip so the server gets a
+        # complete snapshot and can apply deletes, not just per-file updates.
+        zip_bytes = _zip_resources(resources)
         message = args.message or f"upload {framework}/{args.name}"
-        result = client.commit(username, args.name, actions, message)
+        result = client.upload_zip(
+            username, args.name, framework, zip_bytes, message
+        )
     except ApiError as e:
         return _fail(f"upload failed ({e.detail})")
 
     data = result.get("data", {})
     print(
-        f"\nUploaded {data.get('files', len(resources))} file(s) to "
+        f"\nUploaded {data.get('files', len(resources))} file(s) "
+        f"({len(zip_bytes)} B zip) to "
         f"{username}/{args.name} (revision {data.get('Revision', '?')})."
     )
     return 0
@@ -167,7 +172,10 @@ def cmd_download(args) -> int:
         paths = client.list_repo_files(username, args.name)
         if not paths:
             return _fail(f"repository {username}/{args.name} has no files.")
-        resources = {p: client.get_repo_file(username, args.name, p) for p in paths}
+        # List then fetch each file via its download link, one at a time.
+        resources = {
+            p: client.download_repo_file(username, args.name, p) for p in paths
+        }
     except ApiError as e:
         return _fail(f"download failed ({e.detail})")
 
