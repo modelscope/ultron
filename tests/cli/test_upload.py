@@ -1,7 +1,9 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 """CLI argument parsing and upload flow (against a stubbed client)."""
+import io
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -18,7 +20,7 @@ class _StubClient:
         self.server = server
         self.token = token
         self.created = []
-        self.commits = []
+        self.uploads = []
         self.exists = False
         _StubClient.instances.append(self)
 
@@ -29,9 +31,13 @@ class _StubClient:
         self.created.append((path, name, framework))
         return {"success": True}
 
-    def commit(self, path, name, actions, message):
-        self.commits.append({"path": path, "name": name, "actions": actions})
-        return {"success": True, "data": {"Revision": 1, "files": len(actions)}}
+    def upload_zip(self, path, name, framework, zip_bytes, message):
+        self.uploads.append(
+            {"path": path, "name": name, "framework": framework, "zip": zip_bytes}
+        )
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            files = zf.namelist()
+        return {"success": True, "data": {"Revision": 1, "files": len(files)}}
 
 
 def _run(argv):
@@ -81,7 +87,7 @@ class TestUploadCli(unittest.TestCase):
     @mock.patch.object(commands.config, "resolve_token", return_value="tok")
     @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
     @mock.patch.object(commands, "UltronClient", _StubClient)
-    def test_full_upload_creates_then_commits(self, *_):
+    def test_full_upload_creates_then_uploads_zip(self, *_):
         rc = _run([
             "upload", "--framework", "qoder", "--name", "reviewer",
             "--local_dir", str(self.root),
@@ -90,8 +96,11 @@ class TestUploadCli(unittest.TestCase):
         self.assertEqual(len(_StubClient.instances), 1)
         client = _StubClient.instances[0]
         self.assertEqual(client.created, [("u", "reviewer", "qoder")])
-        self.assertEqual(len(client.commits), 1)
-        paths = {a["path"] for a in client.commits[0]["actions"]}
+        self.assertEqual(len(client.uploads), 1)
+        upload = client.uploads[0]
+        self.assertEqual(upload["framework"], "qoder")
+        with zipfile.ZipFile(io.BytesIO(upload["zip"])) as zf:
+            paths = set(zf.namelist())
         self.assertEqual(paths, {"agents/reviewer.md", "AGENTS.md"})
 
     @mock.patch.object(commands.config, "resolve_server", return_value=None)

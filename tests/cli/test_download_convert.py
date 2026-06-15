@@ -29,7 +29,7 @@ class _DownloadStub:
     def list_repo_files(self, path, name):
         return list(self.STORE)
 
-    def get_repo_file(self, path, name, file_path):
+    def download_repo_file(self, path, name, file_path):
         return self.STORE[file_path]
 
 

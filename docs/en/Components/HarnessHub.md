@@ -99,13 +99,21 @@ ultron upload --framework qwenpaw --name default --local_dir ~/.qwenpaw/workspac
 ultron upload --framework qoder --list
 ```
 
+On upload the CLI packs the sub-agent's whole directory into a single **zip** and
+submits it via `POST /api/v1/files/upload` (`multipart/form-data`, fields `file`
+plus `Path`/`Name`/`Framework`/`commit_message`). A whole-directory snapshot is
+used instead of per-file commits because only a complete file set lets the server
+derive **deletes** (which files were removed), not just updates.
+
 ### Download (with optional format conversion)
 
 `ultron download` fetches a sub-agent's stored files and writes them into the
 local workspace. The source framework is read from the repository, so usually
-only `--name` is needed. Pass `--target` to **convert** the files into another
-framework's format on the way down (e.g. you stored an openclaw agent but want to
-run it under qwenpaw):
+only `--name` is needed. Download is two steps: list files via
+`GET /api/v1/agents/{path}/{name}/repo/files`, then resolve each file's download
+link and fetch them one by one. Pass `--target` to **convert** the files into
+another framework's format on the way down (e.g. you stored an openclaw agent but
+want to run it under qwenpaw):
 
 ```bash
 # Restore into the source framework's workspace
