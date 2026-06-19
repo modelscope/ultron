@@ -21,8 +21,6 @@ from ultron.core.logging import setup_logging, set_trace_id, log_event
 from ultron.services.auth import AuthService
 from ultron.services.harness.soul_presets import SoulPresetService
 from ultron.services.harness.showcase import ShowcaseService
-from ultron.services.skill.skill_cluster import KnowledgeClusterService
-from ultron.services.skill.skill_evolution import SkillEvolutionEngine
 from ultron.services.background import run_decay_loop
 from ultron.services.training.sft_trainer import SFTTrainerService
 
@@ -44,20 +42,10 @@ server_state.soul_preset_service.load()
 server_state.showcase_service = ShowcaseService()
 server_state.showcase_service.load()
 
-# Initialize evolution services
+# Initialize evolution services (now created inside Ultron)
 _u = server_state.ultron
-server_state.cluster_service = KnowledgeClusterService(
-    _u.db, _u.embedding, _u.config,
-)
-server_state.evolution_engine = SkillEvolutionEngine(
-    database=_u.db,
-    storage=_u.storage,
-    embedding_service=_u.embedding,
-    cluster_service=server_state.cluster_service,
-    config=_u.config,
-    llm_orchestrator=_u.llm_orchestrator,
-    catalog=_u.catalog,
-)
+server_state.cluster_service = _u.cluster_service
+server_state.evolution_engine = _u.evolution_engine
 
 server_state.trajectory_service = _u.trajectory_service
 server_state.sft_trainer = SFTTrainerService(

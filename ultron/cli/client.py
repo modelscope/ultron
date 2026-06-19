@@ -1,25 +1,21 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 """HTTP client for ultron's agent-repository API.
 
-Delegates to ``modelscope_hub``'s ``LegacyClient`` (``/api/v1/`` endpoints)
-and ``OpenAPIClient`` (``/openapi/v1/`` endpoints) wherever possible.
-The upload flow follows the two-step protocol:
+Delegates entirely to ``modelscope_hub``'s ``OpenAPIClient``
+(``/openapi/v1/`` endpoints). All requests go through the OpenAPI surface.
 
-1. ``POST /openapi/v1/files/upload``  → obtain a file ID
-2. ``POST /openapi/v1/agents``        → create/update agent with the file ID
+Endpoints used:
 
-Endpoints handled via LegacyClient (repo_type="agent" → path segment "agents"):
-
-* ``POST /api/v1/login``                               → token validation
-* ``GET  /api/v1/agents/{path}/{name}``                → repo metadata
-* ``POST /api/v1/agents``                              → create repo
-* ``GET  /api/v1/agents/{path}/{name}/repo/files``     → list files
-* ``GET  /api/v1/agents/{path}/{name}/repo``           → file download
+* ``GET  /openapi/v1/users/me``                            → whoami (login)
+* ``GET  /openapi/v1/agents/{path}/{name}``                → repo metadata
+* ``POST /openapi/v1/agents``                              → create/update agent
+* ``GET  /openapi/v1/agents/{path}/{name}/repo/files``     → list files
+* ``GET  /openapi/v1/agents/{path}/{name}/repo``           → file download
+* ``POST /openapi/v1/files/upload``                        → upload zip
 """
 import io
 from typing import List, Optional
 
-from modelscope_hub._legacy_api import LegacyClient
 from modelscope_hub._openapi import OpenAPIClient
 from modelscope_hub.config import HubConfig
 from modelscope_hub.errors import HubError, NotExistError
@@ -45,32 +41,27 @@ class UltronClient:
         self.server = server.rstrip("/")
         self.token = token
         self.timeout = timeout
-        self._legacy = LegacyClient(
-            token=token, endpoint=self.server, timeout=timeout
-        )
         self._config = HubConfig(endpoint=self.server, token=token)
         self._openapi = OpenAPIClient(config=self._config, timeout=float(timeout))
 
     # ---- auth ----
 
     def login(self, token: str) -> str:
-        """Validate token via POST /api/v1/login, return username."""
+        """Validate token via GET /openapi/v1/users/me, return username."""
         try:
-            data, _ = self._legacy.login(token)
+            self._config.token = token
+            self.token = token
+            data = self._openapi.get_current_user()
         except HubError as exc:
             raise _wrap(exc) from exc
-        # Update internal state with the validated token.
-        self.token = token
-        self._legacy.token = token
-        self._config.token = token
-        return data.get("Username", data.get("username", ""))
+        return data.get("username", data.get("Username", ""))
 
     # ---- repository ----
 
     def repo_info(self, path: str, name: str) -> Optional[dict]:
         """Repo metadata or None if the repo does not exist (404)."""
         try:
-            return self._legacy.get_repo_info(f"{path}/{name}", "agent")
+            return self._openapi._request("GET", f"/agents/{path}/{name}")
         except NotExistError:
             return None
         except HubError as exc:
@@ -82,36 +73,61 @@ class UltronClient:
 
     def create_repo(self, path: str, name: str, framework: str) -> dict:
         try:
-            return self._legacy.create_repo("agent", {
-                "Path": path,
-                "Name": name,
-                "Framework": framework,
-                "Visibility": "public",
-            })
+            return self._openapi._request(
+                "POST",
+                "/agents",
+                json_body={
+                    "path": path,
+                    "name": name,
+                    "framework": framework,
+                    "visibility": "public",
+                },
+            )
         except HubError as exc:
             raise _wrap(exc) from exc
 
     def list_repo_files(self, path: str, name: str) -> List[str]:
         """All file paths in the repo."""
         try:
-            files = self._legacy.list_repo_files(f"{path}/{name}", "agent")
+            data = self._openapi._request(
+                "GET", f"/agents/{path}/{name}/repo/files",
+                params={"Recursive": "true"},
+            )
         except HubError as exc:
             raise _wrap(exc) from exc
-        # list_repo_files returns list[dict] with "Path" or "Name" keys.
+        # Normalize: response may be a list of dicts or wrapped in {"Files": [...]}
+        files = data if isinstance(data, list) else (
+            data.get("Files") or data.get("files") or []
+            if isinstance(data, dict) else []
+        )
         result: List[str] = []
         for f in files:
-            p = f.get("Path") or f.get("path") or f.get("Name") or f.get("name", "")
-            if p:
-                result.append(p)
+            if isinstance(f, str):
+                result.append(f)
+            elif isinstance(f, dict):
+                p = f.get("Path") or f.get("path") or f.get("Name") or f.get("name", "")
+                if p:
+                    result.append(p)
         return result
 
     def download_repo_file(self, path: str, name: str, file_path: str) -> str:
         """Download one repo file, decoded to UTF-8 text."""
         try:
-            resp = self._legacy.download_stream(
-                f"{path}/{name}", "agent", file_path
+            data = self._openapi._request(
+                "GET",
+                f"/agents/{path}/{name}/repo",
+                params={"FilePath": file_path},
+                unwrap=False,
             )
-            return resp.text
+            # Response may be raw text/bytes or JSON-wrapped content.
+            if isinstance(data, (bytes, bytearray)):
+                return data.decode("utf-8")
+            if isinstance(data, str):
+                return data
+            # If JSON envelope, try extracting content.
+            if isinstance(data, dict):
+                return data.get("content", data.get("Content", str(data)))
+            return str(data)
         except HubError as exc:
             raise _wrap(exc) from exc
 

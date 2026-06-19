@@ -14,6 +14,8 @@ from ...services.skill import (
     SkillCatalogService,
     SkillRetriever,
 )
+from ...services.skill.skill_cluster import KnowledgeClusterService
+from ...services.skill.skill_evolution import SkillEvolutionEngine
 from ...services.ingestion import IngestionService
 from ...services.trajectory import TrajectoryService
 from ...utils.llm_orchestrator import LLMOrchestrator
@@ -118,6 +120,10 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
 
         self.catalog = SkillCatalogService(self.db, self.config)
 
+        self.cluster_service = KnowledgeClusterService(
+            self.db, self.embedding, self.config
+        )
+
         self.memory_service = MemoryService(
             self.db,
             self.embedding,
@@ -125,6 +131,7 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
             self.config,
             llm_service=self.llm_service,
             llm_orchestrator=self.llm_orchestrator,
+            cluster_service=self.cluster_service,
         )
 
         self.retriever = SkillRetriever(
@@ -152,6 +159,20 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
         )
 
         self.harness = HarnessService(self.db)
+
+        self.evolution_engine = (
+            SkillEvolutionEngine(
+                database=self.db,
+                storage=self.storage,
+                embedding_service=self.embedding,
+                cluster_service=self.cluster_service,
+                config=self.config,
+                llm_orchestrator=self.llm_orchestrator,
+                catalog=self.catalog,
+            )
+            if self.config.evolution_enabled
+            else None
+        )
 
     def _write_embedding_profile(self) -> None:
         """Persist current embedding settings for observability (no consistency enforcement)."""

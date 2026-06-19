@@ -1,7 +1,6 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 """Implementations of the ``ultron`` CLI subcommands."""
 import getpass
-import io
 import os
 import sys
 import zipfile
@@ -14,6 +13,7 @@ from ultron.services.harness.merge import merge_resources
 
 from . import config
 from .client import ApiError, UltronClient
+from .sync import zip_resources
 
 
 def _fail(message: str) -> int:
@@ -54,13 +54,7 @@ def _build_allowlist(framework: str, name: str, local_dir):
     return spec_cls(agent_name=name, local_dir=local)
 
 
-def _zip_resources(resources: Dict[str, str]) -> bytes:
-    """Pack ``{rel_path: text}`` into a deterministic in-memory zip."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for rel, content in sorted(resources.items()):
-            zf.writestr(rel, content)
-    return buf.getvalue()
+# zip_resources imported from .sync
 
 
 def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
@@ -132,7 +126,7 @@ def cmd_upload(args) -> int:
             print(f"Created repository {username}/{args.name} (framework={framework}).")
         # Pack the whole sub-agent directory into one zip so the server gets a
         # complete snapshot and can apply deletes, not just per-file updates.
-        zip_bytes = _zip_resources(resources)
+        zip_bytes = zip_resources(resources)
         message = args.message or f"upload {framework}/{args.name}"
         result = client.upload_zip(
             username, args.name, framework, zip_bytes, message
@@ -245,4 +239,129 @@ def cmd_convert(args) -> int:
 
     written = dst_spec.apply(converted)
     print(f"\nWrote {len(written)} file(s) under {dst_root}.")
+    return 0
+
+
+def cmd_watch(args) -> int:
+    """Sync agent files from cloud and start background file watcher."""
+    from .cache import cache_dir, pid_file
+    from .sync import apply_sync, backup_local, diff_files, download_cloud
+    from .watcher import daemonize, watch_loop
+
+    framework = args.framework
+    if framework not in ALLOWLIST_REGISTRY:
+        return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
+    if not args.name:
+        return _fail("--name is required")
+
+    server = config.resolve_server(args.server)
+    token = config.resolve_token(args.token)
+    username = config.resolve_username()
+    if not server or not token:
+        return _fail("not logged in. Run 'ultron login' first.")
+    if not username:
+        return _fail("missing username; run 'ultron login' again.")
+
+    # Check if already running.
+    pf = pid_file()
+    if pf.exists():
+        return _fail(f"watch already running (PID file: {pf}). Run 'ultron stop' first.")
+
+    spec = _build_allowlist(framework, args.name, args.local_dir)
+    client = UltronClient(server, token)
+
+    # Step 1: Backup local files.
+    print(f"Backing up local files for {framework}/{args.name}...")
+    backup_path = backup_local(spec, args.name)
+    print(f"  Backup saved: {backup_path}")
+
+    # Step 2: Download cloud files.
+    print(f"Downloading cloud files for {username}/{args.name}...")
+    try:
+        cloud_files = download_cloud(client, username, args.name)
+    except ApiError as e:
+        if e.status == 404:
+            print("  Repository not found on cloud. Skipping sync.")
+            cloud_files = {}
+        else:
+            return _fail(f"download failed ({e.detail})")
+
+    # Step 3: Diff and apply.
+    if cloud_files:
+        local_files = spec.collect()
+        diff = diff_files(local_files, cloud_files)
+        if not diff.empty:
+            print(f"\nSync changes (cloud -> local):")
+            print(f"  Delete {len(diff.to_delete)}, Add {len(diff.to_add)}, "
+                  f"Overwrite {len(diff.to_overwrite)}")
+            changes = apply_sync(spec, diff, cloud_files, backup_path)
+            print(f"  Applied {changes} change(s).")
+        else:
+            print("  Local files are in sync with cloud.")
+    else:
+        print("  No cloud files to sync.")
+
+    # Step 4: Enter background watch mode.
+    interval = getattr(args, "interval", 3) or 3
+    print(f"\nEntering background watch mode (interval={interval}s)...")
+    print(f"  Logs: {cache_dir() / 'logs' / 'watch.log'}")
+    print(f"  Stop: ultron stop")
+
+    daemonize(watch_loop, spec, client, username, args.name, framework, interval)
+    # If we reach here, we are the parent process (daemon forked successfully).
+    print(f"  Watch started (PID file: {pf}).")
+    return 0
+
+
+def cmd_stop(args) -> int:
+    """Stop the background watch process."""
+    from .watcher import stop_daemon
+
+    stopped = stop_daemon()
+    if stopped:
+        print("Watch process stopped.")
+    else:
+        print("No watch process running.")
+    return 0
+
+
+def cmd_recover(args) -> int:
+    """Recover agent files from a backup zip in the cache directory."""
+    from .cache import cache_dir
+
+    framework = args.framework
+    if framework not in ALLOWLIST_REGISTRY:
+        return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
+
+    filename = args.filename
+    zip_path = cache_dir() / filename
+    if not zip_path.exists():
+        # Try exact path if user gave full path.
+        zip_path = Path(filename)
+    if not zip_path.exists():
+        return _fail(f"backup file not found: {filename} (looked in {cache_dir()})")
+
+    name = args.name
+    if not name:
+        # Infer name from filename: "my-agent_20260609_143022.zip" -> "my-agent"
+        stem = zip_path.stem  # e.g. "my-agent_20260609_143022"
+        parts = stem.rsplit("_", 2)
+        name = parts[0] if len(parts) >= 3 else stem
+
+    spec = _build_allowlist(framework, name, args.local_dir)
+    root = spec.workspace_root
+
+    print(f"Recovering {zip_path.name} -> {root}")
+    count = 0
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            target = root / info.filename
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(zf.read(info.filename))
+            print(f"  {info.filename}")
+            count += 1
+
+    print(f"\nRecovered {count} file(s) to {root}.")
     return 0

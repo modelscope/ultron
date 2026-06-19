@@ -10,7 +10,7 @@ Subcommands:
 import argparse
 import sys
 
-from .commands import cmd_convert, cmd_download, cmd_login, cmd_upload
+from .commands import cmd_convert, cmd_download, cmd_login, cmd_recover, cmd_stop, cmd_upload, cmd_watch
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,6 +115,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the converted files without writing.",
     )
     p_cv.set_defaults(func=cmd_convert)
+
+    # ---- watch ----
+    p_watch = sub.add_parser(
+        "watch",
+        help="Sync agent files from cloud and watch for local changes.",
+    )
+    p_watch.add_argument(
+        "--framework", "-f", required=True,
+        help="Agent framework / bot type.",
+    )
+    p_watch.add_argument(
+        "--name", "-n", required=True,
+        help="Sub-agent / repository name.",
+    )
+    p_watch.add_argument("--local_dir", "-d", help="Override workspace root.")
+    p_watch.add_argument("--server", help="Server URL override.")
+    p_watch.add_argument("--token", help="API token override.")
+    p_watch.add_argument(
+        "--interval", type=int, default=3,
+        help="File poll interval in seconds (default: 3).",
+    )
+    p_watch.set_defaults(func=cmd_watch)
+
+    # ---- stop ----
+    p_stop = sub.add_parser("stop", help="Stop the background watch process.")
+    p_stop.set_defaults(func=cmd_stop)
+
+    # ---- recover ----
+    p_recover = sub.add_parser(
+        "recover",
+        help="Recover agent files from a backup zip in ~/.ultron/cache/.",
+    )
+    p_recover.add_argument(
+        "filename",
+        help="Backup zip filename (e.g. my-agent_20260609_143022.zip).",
+    )
+    p_recover.add_argument(
+        "--framework", "-f", required=True,
+        help="Agent framework (needed to locate workspace root).",
+    )
+    p_recover.add_argument("--name", "-n", help="Agent name (inferred from filename if omitted).")
+    p_recover.add_argument("--local_dir", "-d", help="Override workspace root.")
+    p_recover.set_defaults(func=cmd_recover)
 
     return parser
 
