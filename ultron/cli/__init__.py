@@ -21,10 +21,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     # ---- login ----
-    p_login = sub.add_parser("login", help="Authenticate and store an API token.")
+    p_login = sub.add_parser("login", help="Authenticate with an API token.")
     p_login.add_argument("--server", help="Server URL, e.g. http://localhost:9999")
-    p_login.add_argument("--username", help="Username (prompted if omitted).")
-    p_login.add_argument("--password", help="Password (prompted if omitted).")
+    p_login.add_argument("--token", help="API token (prompted if omitted). Also reads ULTRON_TOKEN env.")
     p_login.set_defaults(func=cmd_login)
 
     # ---- upload ----

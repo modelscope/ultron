@@ -12,7 +12,7 @@ openai>=1.0.0
 # Local embedding backend (ultron.core.embeddings, backend=local)
 transformers>=4.51.0
 sentence-transformers>=2.7.0
-
+modelscope_hub
 # Token counting (UltronConfig llm_*_tokens, ULTRON_LLM_*)
 tiktoken>=0.5.0
 

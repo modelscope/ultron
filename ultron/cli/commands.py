@@ -2,6 +2,7 @@
 """Implementations of the ``ultron`` CLI subcommands."""
 import getpass
 import io
+import os
 import sys
 import zipfile
 from pathlib import Path
@@ -28,16 +29,19 @@ def cmd_login(args) -> int:
     server = config.resolve_server(args.server)
     if not server:
         return _fail("no server given; pass --server or set ULTRON_SERVER")
-    username = args.username or input("Username: ").strip()
-    password = args.password or getpass.getpass("Password: ")
-    if not username or not password:
-        return _fail("username and password are required")
+    token = args.token or os.environ.get("ULTRON_TOKEN", "").strip()
+    if not token:
+        token = getpass.getpass("Token: ").strip()
+    if not token:
+        return _fail("token is required (pass --token, set ULTRON_TOKEN, or enter interactively)")
 
     client = UltronClient(server)
     try:
-        token = client.login(username, password)
+        username = client.login(token)
     except ApiError as e:
         return _fail(f"login failed ({e.detail})")
+    if not username:
+        return _fail("login succeeded but server returned no username")
     path = config.save(server, username, token)
     print(f"Logged in as {username} @ {server}")
     print(f"Credentials saved to {path}")
