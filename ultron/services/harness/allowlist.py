@@ -29,6 +29,7 @@ in sync when changing a layout.
 """
 import fnmatch
 import logging
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional, Type
@@ -96,23 +97,27 @@ class ClawWorkspaceAllowlist(ABC):
             return {}
         patterns = self._resolved_patterns()
         result: Dict[str, str] = {}
-        for f in sorted(root.rglob("*")):
-            if not f.is_file() or f.is_symlink():
-                continue
-            try:
-                rel = str(f.relative_to(root))
-            except ValueError:
-                continue
-            if any(part.startswith(".") for part in Path(rel).parts):
-                continue
-            if not self._matches(rel, patterns):
-                continue
-            try:
-                if f.stat().st_size > MAX_FILE_SIZE:
+        for dirpath, dirnames, filenames in os.walk(root):
+            # Skip hidden directories in-place (prevents descending into them).
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+            for fname in sorted(filenames):
+                if fname.startswith("."):
                     continue
-                result[rel] = f.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as e:
-                logger.debug("Skip %s: %s", f, e)
+                f = Path(dirpath) / fname
+                if f.is_symlink():
+                    continue
+                try:
+                    rel = str(f.relative_to(root))
+                except ValueError:
+                    continue
+                if not self._matches(rel, patterns):
+                    continue
+                try:
+                    if f.stat().st_size > MAX_FILE_SIZE:
+                        continue
+                    result[rel] = f.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as e:
+                    logger.debug("Skip %s: %s", f, e)
         return result
 
     def list_agents(self) -> List[str]:

@@ -117,17 +117,15 @@ def cmd_upload(args) -> int:
         return _fail("missing username; run 'ultron login' again.")
 
     client = UltronClient(server, token)
-    try:
-        # Step 1: upload zip file -> get file_id
-        zip_bytes = zip_resources(resources)
-        file_id = client.upload_file(zip_bytes)
-        # Step 2: create/update agent with file_id
-        result = client.create_repo(
-            username, args.name, framework,
-            system_prompt_files=file_id,
-        )
-    except ApiError as e:
-        return _fail(f"upload failed ({e.detail})")
+
+    # Step 1: upload zip file -> get file_id
+    zip_bytes = zip_resources(resources)
+    file_id = client.upload_file(zip_bytes)
+    # Step 2: create/update agent with file_id
+    result = client.create_repo(
+        username, args.name, framework,
+        system_prompt_files=file_id,
+    )
 
     print(
         f"\nUploaded {len(resources)} file(s) "
