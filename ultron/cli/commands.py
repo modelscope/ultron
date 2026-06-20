@@ -54,9 +54,6 @@ def _build_allowlist(framework: str, name: str, local_dir):
     return spec_cls(agent_name=name, local_dir=local)
 
 
-# zip_resources imported from .sync
-
-
 def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
     """Convert workspace resources from one framework's format to another.
 
@@ -121,24 +118,21 @@ def cmd_upload(args) -> int:
 
     client = UltronClient(server, token)
     try:
-        if not client.check_repo(username, args.name):
-            client.create_repo(username, args.name, framework)
-            print(f"Created repository {username}/{args.name} (framework={framework}).")
-        # Pack the whole sub-agent directory into one zip so the server gets a
-        # complete snapshot and can apply deletes, not just per-file updates.
+        # Step 1: upload zip file -> get file_id
         zip_bytes = zip_resources(resources)
-        message = args.message or f"upload {framework}/{args.name}"
-        result = client.upload_zip(
-            username, args.name, framework, zip_bytes, message
+        file_id = client.upload_file(zip_bytes)
+        # Step 2: create/update agent with file_id
+        result = client.create_repo(
+            username, args.name, framework,
+            system_prompt_files=file_id,
         )
     except ApiError as e:
         return _fail(f"upload failed ({e.detail})")
 
-    data = result.get("data", {})
     print(
-        f"\nUploaded {data.get('files', len(resources))} file(s) "
+        f"\nUploaded {len(resources)} file(s) "
         f"({len(zip_bytes)} B zip) to "
-        f"{username}/{args.name} (revision {data.get('Revision', '?')})."
+        f"{username}/{args.name}."
     )
     return 0
 

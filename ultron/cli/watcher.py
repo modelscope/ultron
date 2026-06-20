@@ -93,8 +93,11 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
             logger.info("Detected changes in: %s", ", ".join(sorted(changed)))
             try:
                 zip_bytes = zip_resources(current_resources)
-                message = f"auto-sync {len(changed)} file(s)"
-                client.upload_zip(username, name, framework, zip_bytes, message)
+                file_id = client.upload_file(zip_bytes)
+                client.create_repo(
+                    username, name, framework,
+                    system_prompt_files=file_id,
+                )
                 logger.info("Upload complete (%d bytes zip).", len(zip_bytes))
             except Exception as exc:
                 logger.error("Upload failed: %s", exc)

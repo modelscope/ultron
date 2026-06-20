@@ -71,44 +71,66 @@ class UltronClient:
         """True if the repo exists, False on 404."""
         return self.repo_info(path, name) is not None
 
-    def create_repo(self, path: str, name: str, framework: str) -> dict:
+    def create_repo(
+        self, path: str, name: str, framework: str,
+        visibility: str = "public",
+        system_prompt_files: Optional[str] = None,
+    ) -> dict:
+        """Create or update an agent (POST /agents).
+
+        When *system_prompt_files* is provided the server uses the uploaded
+        file as the agent content ("新增和更新重叠使用本方法").
+        """
+        body: dict = {
+            "path": path,
+            "name": name,
+            "framework": framework,
+            "visibility": visibility,
+        }
+        if system_prompt_files:
+            body["system_prompt_files"] = system_prompt_files
         try:
-            return self._openapi._request(
-                "POST",
-                "/agents",
-                json_body={
-                    "path": path,
-                    "name": name,
-                    "framework": framework,
-                    "visibility": "public",
-                },
-            )
+            return self._openapi._request("POST", "/agents", json_body=body)
         except HubError as exc:
             raise _wrap(exc) from exc
 
     def list_repo_files(self, path: str, name: str) -> List[str]:
-        """All file paths in the repo."""
-        try:
-            data = self._openapi._request(
-                "GET", f"/agents/{path}/{name}/repo/files",
-                params={"Recursive": "true"},
-            )
-        except HubError as exc:
-            raise _wrap(exc) from exc
-        # Normalize: response may be a list of dicts or wrapped in {"Files": [...]}
-        files = data if isinstance(data, list) else (
-            data.get("Files") or data.get("files") or []
-            if isinstance(data, dict) else []
-        )
-        result: List[str] = []
-        for f in files:
-            if isinstance(f, str):
-                result.append(f)
-            elif isinstance(f, dict):
-                p = f.get("Path") or f.get("path") or f.get("Name") or f.get("name", "")
-                if p:
-                    result.append(p)
-        return result
+        """All file paths in the repo (follows pagination)."""
+        all_files: List[str] = []
+        page = 1
+        page_size = 100
+        while True:
+            try:
+                data = self._openapi._request(
+                    "GET", f"/agents/{path}/{name}/repo/files",
+                    params={
+                        "Recursive": "true",
+                        "PageNumber": str(page),
+                        "PageSize": str(page_size),
+                    },
+                )
+            except HubError as exc:
+                raise _wrap(exc) from exc
+            # Normalize: response may be a list of dicts or wrapped in {"Files": [...]}
+            if isinstance(data, list):
+                files = data
+                total = len(data)
+            elif isinstance(data, dict):
+                files = data.get("Files") or data.get("files") or []
+                total = data.get("Total") or data.get("total") or len(files)
+            else:
+                break
+            for f in files:
+                if isinstance(f, str):
+                    all_files.append(f)
+                elif isinstance(f, dict):
+                    p = f.get("Path") or f.get("path") or f.get("Name") or f.get("name", "")
+                    if p:
+                        all_files.append(p)
+            if page * page_size >= total:
+                break
+            page += 1
+        return all_files
 
     def download_repo_file(self, path: str, name: str, file_path: str) -> str:
         """Download one repo file, decoded to UTF-8 text."""
@@ -131,41 +153,18 @@ class UltronClient:
         except HubError as exc:
             raise _wrap(exc) from exc
 
-    # ---- upload (two-step protocol) ----
+    # ---- upload ----
 
-    def upload_zip(
-        self,
-        path: str,
-        name: str,
-        framework: str,
-        zip_bytes: bytes,
-        message: str,
-    ) -> dict:
-        """Upload a zip snapshot and create/update the agent.
-
-        Step 1: POST /openapi/v1/files/upload  → file ID
-        Step 2: POST /openapi/v1/agents        → create/update agent
-        """
+    def upload_file(self, zip_bytes: bytes) -> str:
+        """Upload a zip file (POST /files/upload), return the file ID."""
         try:
-            # Step 1: upload zip file, obtain the file ID.
             file_obj = io.BytesIO(zip_bytes)
             result = self._openapi.upload_file(file=file_obj)
-            file_id = (
+            return (
                 result.get("id")
                 or result.get("Id")
                 or result.get("file_id")
                 or ""
             )
-            # Step 2: create/update agent with the uploaded file ID.
-            agent_data = self._openapi._request(
-                "POST",
-                "/agents",
-                json_body={
-                    "name": name,
-                    "path": path,
-                    "system_prompt_files": file_id,
-                },
-            )
-            return {"data": agent_data} if isinstance(agent_data, dict) else {"data": {}}
         except HubError as exc:
             raise _wrap(exc) from exc
