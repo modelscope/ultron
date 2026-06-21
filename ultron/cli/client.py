@@ -1,12 +1,9 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 """HTTP client for ultron's agent-repository API.
 
-Delegates entirely to ``modelscope_hub``'s ``OpenAPIClient``
-(``/openapi/v1/`` endpoints). All requests go through the OpenAPI surface.
+All endpoints go through ``/openapi/v1/`` via ``modelscope_hub.OpenAPIClient``:
 
-Endpoints used:
-
-* ``GET  /openapi/v1/users/me``                            → whoami (login)
+* ``GET  /openapi/v1/users/me``                            → login
 * ``GET  /openapi/v1/agents/{path}/{name}``                → repo metadata
 * ``POST /openapi/v1/agents``                              → create/update agent
 * ``GET  /openapi/v1/agents/{path}/{name}/repo/files``     → list files
@@ -95,7 +92,7 @@ class UltronClient:
             raise _wrap(exc) from exc
 
     def list_repo_files(self, path: str, name: str) -> List[str]:
-        """All file paths in the repo (follows pagination)."""
+        """All file paths in the repo (GET /agents/{path}/{name}/repo/files)."""
         all_files: List[str] = []
         page = 1
         page_size = 100
@@ -111,7 +108,7 @@ class UltronClient:
                 )
             except HubError as exc:
                 raise _wrap(exc) from exc
-            # Normalize: response may be a list of dicts or wrapped in {"Files": [...]}
+            # Normalize: response may be a list or wrapped in {"Files": [...]}
             if isinstance(data, list):
                 files = data
                 total = len(data)
@@ -133,7 +130,7 @@ class UltronClient:
         return all_files
 
     def download_repo_file(self, path: str, name: str, file_path: str) -> str:
-        """Download one repo file, decoded to UTF-8 text."""
+        """Download one repo file (GET /agents/{path}/{name}/repo?FilePath=...)."""
         try:
             data = self._openapi._request(
                 "GET",
@@ -141,25 +138,23 @@ class UltronClient:
                 params={"FilePath": file_path},
                 unwrap=False,
             )
-            # Response may be raw text/bytes or JSON-wrapped content.
-            if isinstance(data, (bytes, bytearray)):
-                return data.decode("utf-8")
-            if isinstance(data, str):
-                return data
-            # If JSON envelope, try extracting content.
-            if isinstance(data, dict):
-                return data.get("content", data.get("Content", str(data)))
-            return str(data)
         except HubError as exc:
             raise _wrap(exc) from exc
+        if isinstance(data, (bytes, bytearray)):
+            return data.decode("utf-8")
+        if isinstance(data, str):
+            return data
+        if isinstance(data, dict):
+            return data.get("content", data.get("Content", str(data)))
+        return str(data)
 
     # ---- upload ----
 
     def upload_file(self, zip_bytes: bytes) -> str:
         """Upload a zip file (POST /files/upload), return the file ID."""
         try:
-            file_obj = io.BytesIO(zip_bytes)
-            result = self._openapi.upload_file(file=file_obj)
+            files = [("file", ("agent.zip", io.BytesIO(zip_bytes), "application/zip"))]
+            result = self._openapi._request("POST", "/files/upload", files=files)
             return (
                 result.get("id")
                 or result.get("Id")
