@@ -13,7 +13,6 @@ from ultron.services.harness.merge import merge_resources
 
 from . import config
 from .client import ApiError, UltronClient
-from .sync import zip_resources
 
 
 def _fail(message: str) -> int:
@@ -118,9 +117,8 @@ def cmd_upload(args) -> int:
 
     client = UltronClient(server, token)
 
-    # Step 1: upload zip file -> get file_id
-    zip_bytes = zip_resources(resources)
-    file_id = client.upload_file(zip_bytes)
+    # Step 1: upload files -> get file_id
+    file_id = client.upload_file(resources)
     # Step 2: create/update agent with file_id
     result = client.create_repo(
         username, args.name, framework,

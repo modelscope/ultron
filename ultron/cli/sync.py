@@ -29,10 +29,27 @@ def _md5(content: str) -> str:
 
 
 def zip_resources(resources: Dict[str, str]) -> bytes:
-    """Pack ``{rel_path: text}`` into a deterministic in-memory zip."""
+    """Pack resources into a deterministic in-memory zip.
+
+    Args:
+        resources: A dict {rel_path: content_or_filepath}. If a value is a
+                   short string that points to an existing file on disk, its
+                   content is read; otherwise the value is treated as literal
+                   text content.
+    """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for rel, content in sorted(resources.items()):
+        for rel, value in sorted(resources.items()):
+            content = value
+            # Only attempt path resolution for short values that have no
+            # newlines (newlines are a strong signal of literal content).
+            if isinstance(value, str) and len(value) < 4096 and "\n" not in value:
+                try:
+                    p = Path(value)
+                    if p.is_file():
+                        content = p.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    pass
             zf.writestr(rel, content)
     return buf.getvalue()
 

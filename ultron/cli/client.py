@@ -11,11 +11,14 @@ All endpoints go through ``/openapi/v1/`` via ``modelscope_hub.OpenAPIClient``:
 * ``POST /openapi/v1/files/upload``                        → upload zip
 """
 import io
-from typing import List, Optional
+from typing import Dict, List, Optional, Union
 
+import requests
 from modelscope_hub._openapi import OpenAPIClient
 from modelscope_hub.config import HubConfig
 from modelscope_hub.errors import HubError, NotExistError
+
+from .sync import zip_resources
 
 
 class ApiError(Exception):
@@ -91,67 +94,71 @@ class UltronClient:
         except HubError as exc:
             raise _wrap(exc) from exc
 
-    def list_repo_files(self, path: str, name: str) -> List[str]:
-        """All file paths in the repo (GET /agents/{path}/{name}/repo/files)."""
-        all_files: List[str] = []
-        page = 1
-        page_size = 100
-        while True:
-            try:
-                data = self._openapi._request(
-                    "GET", f"/agents/{path}/{name}/repo/files",
-                    params={
-                        "Recursive": "true",
-                        "PageNumber": str(page),
-                        "PageSize": str(page_size),
-                    },
-                )
-            except HubError as exc:
-                raise _wrap(exc) from exc
-            # Normalize: response may be a list or wrapped in {"Files": [...]}
-            if isinstance(data, list):
-                files = data
-                total = len(data)
-            elif isinstance(data, dict):
-                files = data.get("Files") or data.get("files") or []
-                total = data.get("Total") or data.get("total") or len(files)
-            else:
-                break
-            for f in files:
-                if isinstance(f, str):
-                    all_files.append(f)
-                elif isinstance(f, dict):
-                    p = f.get("Path") or f.get("path") or f.get("Name") or f.get("name", "")
-                    if p:
-                        all_files.append(p)
-            if page * page_size >= total:
-                break
-            page += 1
-        return all_files
+    def list_repo_files(self, path: str, name: str, revision: str = 'master') -> List[str]:
+        """All file paths in the repo, recursing into sub-directories.
 
-    def download_repo_file(self, path: str, name: str, file_path: str) -> str:
-        """Download one repo file (GET /agents/{path}/{name}/repo?FilePath=...)."""
+        The server returns ``{"commit": {...}, "trees": [...]}`` where each
+        entry has ``type`` ("tree" for dirs, "blob" for files) and ``path``.
+        """
+        all_files: List[str] = []
         try:
             data = self._openapi._request(
-                "GET",
-                f"/agents/{path}/{name}/repo",
-                params={"FilePath": file_path},
-                unwrap=False,
+                "GET", f"/agents/{path}/{name}/repo/files",
+                params={
+                    "recursive": "true",
+                    "page_size": "100",
+                    "page_number": "1",
+                    "revision": revision,
+                },
             )
+            trees = []
+            if isinstance(data, dict):
+                trees = data.get("trees") or data.get("Trees") or []
+            elif isinstance(data, list):
+                trees = data
+            for item in trees:
+                if not isinstance(item, dict):
+                    continue
+                item_path = item.get("path") or item.get("Path") or ""
+                item_type = item.get("type") or item.get("Type") or ""
+                if item_type == "blob" and item_path:
+                    all_files.append(item_path)
         except HubError as exc:
             raise _wrap(exc) from exc
-        if isinstance(data, (bytes, bytearray)):
-            return data.decode("utf-8")
-        if isinstance(data, str):
-            return data
-        if isinstance(data, dict):
-            return data.get("content", data.get("Content", str(data)))
-        return str(data)
+        return all_files
+
+    def download_repo_file(self, path: str, name: str, file_path: str,
+                           revision: str = "master") -> str:
+        """Download one repo file (GET /agents/{path}/{name}/resolve/{revision}/{file_path}).
+
+        This endpoint does NOT use the /openapi/v1/ prefix.
+        """
+        url = f"{self.server}/agents/{path}/{name}/resolve/{revision}/{file_path}"
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        try:
+            resp = requests.get(url, headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            detail = exc.response.text if exc.response is not None else str(exc)
+            raise ApiError(status, detail) from exc
+        except requests.RequestException as exc:
+            raise ApiError(0, str(exc)) from exc
+        return resp.text
 
     # ---- upload ----
 
-    def upload_file(self, zip_bytes: bytes) -> str:
-        """Upload a zip file (POST /files/upload), return the file ID."""
+    def upload_file(self, resources: Union[Dict[str, str], bytes]) -> str:
+        """Upload agent files (POST /files/upload), return the file ID.
+
+        Args:
+            resources: Either a dict {rel_path: content} that will be zipped,
+                       or raw zip bytes.
+        """
+        if isinstance(resources, dict):
+            zip_bytes = zip_resources(resources)
+        else:
+            zip_bytes = resources
         try:
             files = [("file", ("agent.zip", io.BytesIO(zip_bytes), "application/zip"))]
             result = self._openapi._request("POST", "/files/upload", files=files)
