@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 from typing import Dict
 
-from ultron.services.harness.allowlist import ALLOWLIST_REGISTRY
+from ultron.services.harness.allowlist import ALLOWLIST_REGISTRY, ALL_AGENT_NAME
 from ultron.services.harness.defaults import get_defaults
 from ultron.services.harness.merge import merge_resources
 
@@ -126,8 +126,7 @@ def cmd_upload(args) -> int:
     )
 
     print(
-        f"\nUploaded {len(resources)} file(s) "
-        f"({len(zip_bytes)} B zip) to "
+        f"\nUploaded {len(resources)} file(s) to "
         f"{username}/{args.name}."
     )
     return 0
@@ -233,9 +232,8 @@ def cmd_convert(args) -> int:
 
 
 def cmd_watch(args) -> int:
-    """Sync agent files from cloud and start background file watcher."""
-    from .cache import cache_dir, pid_file
-    from .sync import apply_sync, backup_local, diff_files, download_cloud
+    """Start background bidirectional sync for agent files."""
+    from .cache import pid_file
     from .watcher import daemonize, watch_loop
 
     framework = args.framework
@@ -260,41 +258,32 @@ def cmd_watch(args) -> int:
     spec = _build_allowlist(framework, args.name, args.local_dir)
     client = UltronClient(server, token)
 
-    # Step 1: Backup local files.
-    print(f"Backing up local files for {framework}/{args.name}...")
-    backup_path = backup_local(spec, args.name)
-    print(f"  Backup saved: {backup_path}")
+    # Guard: file-per-agent frameworks must use --name all for watch.
+    if not spec.supports_individual_watch and args.name != ALL_AGENT_NAME:
+        return _fail(
+            f"'{framework}' has shared files across sub-agents; "
+            f"watch only supports '--name all' to avoid sync conflicts. "
+            f"Use 'ultron upload/download -n {args.name}' for individual sub-agent operations."
+        )
 
-    # Step 2: Download cloud files.
-    print(f"Downloading cloud files for {username}/{args.name}...")
+    # Guard: check remote repo framework matches local.
     try:
-        cloud_files = download_cloud(client, username, args.name)
-    except ApiError as e:
-        if e.status == 404:
-            print("  Repository not found on cloud. Skipping sync.")
-            cloud_files = {}
-        else:
-            return _fail(f"download failed ({e.detail})")
+        info = client.repo_info(username, args.name)
+        if info:
+            remote_fw = info.get("Framework") or info.get("framework") or ""
+            if remote_fw and remote_fw != framework:
+                return _fail(
+                    f"framework mismatch: local={framework}, remote={remote_fw}. "
+                    f"Use 'ultron convert' or 'ultron download --target' for cross-framework sync."
+                )
+    except ApiError:
+        pass  # repo not found or unreachable — proceed, first push will create it
 
-    # Step 3: Diff and apply.
-    if cloud_files:
-        local_files = spec.collect()
-        diff = diff_files(local_files, cloud_files)
-        if not diff.empty:
-            print(f"\nSync changes (cloud -> local):")
-            print(f"  Delete {len(diff.to_delete)}, Add {len(diff.to_add)}, "
-                  f"Overwrite {len(diff.to_overwrite)}")
-            changes = apply_sync(spec, diff, cloud_files, backup_path)
-            print(f"  Applied {changes} change(s).")
-        else:
-            print("  Local files are in sync with cloud.")
-    else:
-        print("  No cloud files to sync.")
-
-    # Step 4: Enter background watch mode.
-    interval = getattr(args, "interval", 3) or 3
-    print(f"\nEntering background watch mode (interval={interval}s)...")
-    print(f"  Logs: {cache_dir() / 'logs' / 'watch.log'}")
+    interval = getattr(args, "interval", 60) or 60
+    print(f"Starting bidirectional sync for {username}/{args.name} (interval={interval}s)...")
+    print(f"  Framework: {framework}")
+    print(f"  Root: {spec.workspace_root}")
+    print(f"  Logs: {pid_file().parent / 'logs' / 'watch.log'}")
     print(f"  Stop: ultron stop")
 
     daemonize(watch_loop, spec, client, username, args.name, framework, interval)

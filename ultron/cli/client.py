@@ -11,6 +11,7 @@ All endpoints go through ``/openapi/v1/`` via ``modelscope_hub.OpenAPIClient``:
 * ``POST /openapi/v1/files/upload``                        → upload zip
 """
 import io
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Union
 
 import requests
@@ -19,6 +20,14 @@ from modelscope_hub.config import HubConfig
 from modelscope_hub.errors import HubError, NotExistError
 
 from .sync import zip_resources
+
+
+@dataclass
+class RemoteFileInfo:
+    """Metadata for a single file in the remote repository."""
+    path: str
+    sha256: str
+    committed_date: int  # unix timestamp
 
 
 class ApiError(Exception):
@@ -126,6 +135,45 @@ class UltronClient:
         except HubError as exc:
             raise _wrap(exc) from exc
         return all_files
+
+    def list_repo_files_detail(self, path: str, name: str, revision: str = 'master') -> List[RemoteFileInfo]:
+        """All blob files with sha256 and committed_date.
+
+        Returns a list of ``RemoteFileInfo`` for each blob entry in the repo.
+        Raises ``ApiError(404, ...)`` if the repo does not exist.
+        """
+        results: List[RemoteFileInfo] = []
+        try:
+            data = self._openapi._request(
+                "GET", f"/agents/{path}/{name}/repo/files",
+                params={
+                    "recursive": "true",
+                    "page_size": "100",
+                    "page_number": "1",
+                    "revision": revision,
+                },
+            )
+            trees = []
+            if isinstance(data, dict):
+                trees = data.get("trees") or data.get("Trees") or []
+            elif isinstance(data, list):
+                trees = data
+            for item in trees:
+                if not isinstance(item, dict):
+                    continue
+                item_type = item.get("type") or item.get("Type") or ""
+                if item_type != "blob":
+                    continue
+                item_path = item.get("path") or item.get("Path") or ""
+                item_sha = item.get("sha256") or item.get("Sha256") or ""
+                item_date = item.get("committed_date") or item.get("Committed_date") or 0
+                if item_path:
+                    results.append(RemoteFileInfo(
+                        path=item_path, sha256=item_sha, committed_date=int(item_date),
+                    ))
+        except HubError as exc:
+            raise _wrap(exc) from exc
+        return results
 
     def download_repo_file(self, path: str, name: str, file_path: str,
                            revision: str = "master") -> str:

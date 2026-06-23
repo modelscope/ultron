@@ -9,8 +9,14 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Dict, Optional
 
-from .cache import log_file, pid_file
-from .sync import _md5, zip_resources
+from .cache import load_sync_state, log_file, pid_file, save_sync_state
+from .client import ApiError
+from .sync import (
+    backup_local,
+    detect_local_changes,
+    pull_incremental,
+    push_resources,
+)
 
 _logger: Optional[logging.Logger] = None
 
@@ -30,15 +36,10 @@ def _get_logger() -> logging.Logger:
     return _logger
 
 
-def _snapshot(resources: Dict[str, str]) -> Dict[str, str]:
-    """Build a snapshot of ``{rel_path: md5}`` from collected resources."""
-    return {rel: _md5(content) for rel, content in resources.items()}
+def watch_loop(spec, client, username: str, name: str, framework: str, interval: int = 60, sessions_dir: str = None):
+    """Bidirectional sync loop: pull remote changes, push local changes.
 
-
-def watch_loop(spec, client, username: str, name: str, framework: str, interval: int = 3, sessions_dir: str = None):
-    """Poll for file changes and upload when detected.
-
-    Runs indefinitely until SIGTERM is received.
+    Runs indefinitely until SIGTERM/SIGINT is received.
     If *sessions_dir* is provided and a valid LLM API key is configured, also runs the
     local memory/skill extraction pipeline periodically.
     """
@@ -46,9 +47,8 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
     root: Path = spec.workspace_root
     logger.info("Watch started for %s/%s (root=%s, interval=%ds)", username, name, root, interval)
 
-    # Initial snapshot.
-    resources = spec.collect()
-    prev_snap = _snapshot(resources)
+    # Load sync baseline from cache.
+    state = load_sync_state(name)
 
     # Optional: local pipeline (requires ULTRON_API_KEY or equivalent)
     local_ultron = None
@@ -67,8 +67,8 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
             local_ultron = None
 
     running = True
-    # Run pipeline every N poll cycles (100 * 3s = ~5 min by default)
-    pipeline_every_n_cycles = 100
+    # Run pipeline every N poll cycles (e.g. 5 * 60s = ~5 min)
+    pipeline_every_n_cycles = 5
     cycle_counter = 0
     sessions_dirty = True  # run once at start to catch up
     last_sessions_mtime = 0.0
@@ -82,28 +82,87 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
 
     while running:
         time.sleep(interval)
-        current_resources = spec.collect()
-        curr_snap = _snapshot(current_resources)
+        if not running:
+            break
 
-        if curr_snap != prev_snap:
-            changed = set(curr_snap.keys()) ^ set(prev_snap.keys())
-            for k in set(curr_snap.keys()) & set(prev_snap.keys()):
-                if curr_snap[k] != prev_snap[k]:
-                    changed.add(k)
-            logger.info("Detected changes in: %s", ", ".join(sorted(changed)))
-            try:
-                zip_bytes = zip_resources(current_resources)
-                file_id = client.upload_file(zip_bytes)
-                client.create_repo(
-                    username, name, framework,
-                    system_prompt_files=file_id,
+        # ---- Step 1: Fetch remote file list ----
+        try:
+            remote_files = client.list_repo_files_detail(username, name)
+        except ApiError as e:
+            if e.status in (404, 500):
+                # 404 = repo doesn't exist yet; 500 = newly created repo not ready.
+                remote_files = []
+            else:
+                logger.error("Failed to list remote files: %s", e)
+                continue
+
+        remote_max_date = max((f.committed_date for f in remote_files), default=0)
+        remote_sha_map = {f.path: f.sha256 for f in remote_files}
+
+        # ---- Step 2: Detect remote changes ----
+        # Two signals: (a) timestamp advanced, or (b) file set changed (covers
+        # pure deletions where no remaining file's committed_date advances).
+        remote_changed = (
+            (remote_max_date > state["last_commit_date"])
+            or (set(remote_sha_map.keys()) != set(state.get("remote_files", {}).keys()))
+        )
+
+        # ---- Step 3: Collect local and detect local changes ----
+        local_resources = spec.collect()
+        local_changes = detect_local_changes(local_resources, state["remote_files"])
+        local_changed = bool(local_changes)
+
+        # ---- Step 4: Four-quadrant decision ----
+        try:
+            if remote_changed and local_changed:
+                # Conflict: remote wins, backup local first.
+                backup_path = backup_local(spec, name)
+                pull_incremental(client, username, name, spec, remote_files, local_resources)
+                logger.warning(
+                    "Conflict: remote and local both changed. "
+                    "Remote wins. Local backup: %s", backup_path,
                 )
-                logger.info("Upload complete (%d bytes zip).", len(zip_bytes))
-            except Exception as exc:
-                logger.error("Upload failed: %s", exc)
-            prev_snap = curr_snap
+            elif remote_changed:
+                backup_path = backup_local(spec, name)
+                pull_incremental(client, username, name, spec, remote_files, local_resources)
+                logger.info("Pulled remote changes (backup: %s).", backup_path)
+            elif local_changed:
+                push_resources(client, username, name, framework, local_resources)
+                logger.info("Pushed local changes.")
+            else:
+                # No changes on either side — skip baseline update.
+                pass
+        except Exception as exc:
+            # Operation failed: do NOT update baseline; retry next cycle.
+            logger.error("Sync failed (will retry): %s", exc)
+            # Fall through to pipeline check, but skip baseline update.
+            remote_changed = False
+            local_changed = False
 
-        # Check if sessions directory has new/modified files
+        # ---- Step 5: Update baseline (only on success) ----
+        if remote_changed or local_changed:
+            fresh = None
+            for _attempt in range(3):
+                try:
+                    fresh = client.list_repo_files_detail(username, name)
+                    break
+                except ApiError as e:
+                    if e.status == 500 and _attempt < 2:
+                        time.sleep(3)
+                        continue
+                    logger.error("Failed to refresh baseline: %s", e)
+                    break
+                except Exception as exc:
+                    logger.error("Failed to refresh baseline: %s", exc)
+                    break
+            if fresh is not None:
+                fresh_max = max((f.committed_date for f in fresh), default=0)
+                fresh_sha = {f.path: f.sha256 for f in fresh}
+                state["last_commit_date"] = fresh_max
+                state["remote_files"] = fresh_sha
+                save_sync_state(name, fresh_max, fresh_sha)
+
+        # ---- Optional: local pipeline ----
         if local_ultron and not sessions_dirty:
             try:
                 sessions_path = Path(sessions_dir)
@@ -117,7 +176,6 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
             except Exception:
                 pass
 
-        # Periodically run local pipeline for memory/skill extraction
         cycle_counter += 1
         if local_ultron and sessions_dirty and cycle_counter % pipeline_every_n_cycles == 0:
             try:
@@ -130,7 +188,7 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
                     logger.info("Pipeline cycle result: %s", result)
                     last_sessions_mtime = time.time()
                 else:
-                    sessions_dirty = False  # no new work, pause until sessions change
+                    sessions_dirty = False
                     last_sessions_mtime = time.time()
             except Exception as exc:
                 logger.warning("Pipeline cycle failed: %s", exc)

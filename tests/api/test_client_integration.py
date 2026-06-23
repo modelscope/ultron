@@ -66,7 +66,7 @@ NANOBOT_FILES = {
     "memory/MEMORY.md": "# Memory\n\n## Key Facts\n- User likes Python\n",
     "memory/HISTORY.md": "# History\n\n2024-01-01: First interaction\n",
     "skills/web-search/SKILL.md": "# Web Search\nSearch the web for information.\n",
-    "skills/web-search/scripts/search.py": "# search script\nprint('searching...')\n",
+    "skills/web-search/scripts/search.py": "# search script\nquery web for results\n",
 }
 
 OPENCLAW_FILES = {
@@ -97,7 +97,7 @@ HERMES_FILES = {
     "SOUL.md": "# Soul\n\n## Identity\nI am Hermes, a personal knowledge assistant.\n",
     "memories/USER.md": "# User\n\n## Interests\n- Philosophy\n- History\n",
     "skills/research/SKILL.md": "# Research\nDeep research on any topic.\n",
-    "skills/research/scripts/crawl.py": "# crawl script\nprint('crawling...')\n",
+    "skills/research/scripts/crawl.py": "# crawl script\nfetch pages and extract content\n",
     "skills/summarize/SKILL.md": "# Summarize\nSummarize long documents.\n",
 }
 
@@ -119,7 +119,7 @@ QODER_FILES = {
     "commands/review.md": "# /review\nTrigger a code review on the current file.\n",
     "rules/style-guide.md": "# Style Guide\nUse 4-space indentation for Python.\n",
     "skills/lint/SKILL.md": "# Lint\nRun linters on the codebase.\n",
-    "skills/lint/scripts/run_lint.sh": "#!/bin/bash\nflake8 .\n",
+    "skills/lint/scripts/run_lint.sh": "# lint runner\nrun flake8 on all project files\n",
 }
 
 ALL_FRAMEWORK_FILES = {

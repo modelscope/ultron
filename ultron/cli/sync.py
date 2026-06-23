@@ -1,14 +1,20 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
-"""Core sync logic: backup, download, diff, apply."""
+"""Core sync logic: backup, download, diff, apply, bidirectional sync helpers."""
 import hashlib
 import io
+import logging
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List
 
 from .cache import cache_dir, cloud_dir
+
+if TYPE_CHECKING:
+    from .client import RemoteFileInfo, UltronClient
+
+logger = logging.getLogger("ultron.watch")
 
 
 @dataclass
@@ -137,4 +143,101 @@ def apply_sync(spec, diff: DiffResult, cloud: Dict[str, str], backup_path: Path)
         changes += 1
 
     return changes
+
+
+# ---- Bidirectional sync helpers ----
+
+def sha256_content(content: str) -> str:
+    """Compute sha256 of text content (utf-8 encoded, no BOM)."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def detect_local_changes(
+    local_resources: Dict[str, str],
+    baseline_sha256: Dict[str, str],
+) -> Dict[str, str]:
+    """Compare local files against the sync baseline sha256 map.
+
+    Returns a dict of files that differ:
+      - key present with non-empty value: content changed or file is new locally
+      - key present with empty string value: file was deleted locally (in baseline but not local)
+    """
+    changed: Dict[str, str] = {}
+    # Modified or new files.
+    for rel, content in local_resources.items():
+        local_sha = sha256_content(content)
+        if baseline_sha256.get(rel) != local_sha:
+            changed[rel] = content
+    # Deleted files (in baseline but not in local).
+    for rel in baseline_sha256:
+        if rel not in local_resources:
+            changed[rel] = ""
+    return changed
+
+
+def push_resources(
+    client: "UltronClient",
+    username: str,
+    name: str,
+    framework: str,
+    resources: Dict[str, str],
+) -> None:
+    """Zip, upload, and create/update the remote agent repo.
+
+    Raises on failure (caller should NOT update baseline on exception).
+    """
+    zip_bytes = zip_resources(resources)
+    file_id = client.upload_file(zip_bytes)
+    client.create_repo(username, name, framework, system_prompt_files=file_id)
+    logger.info("Pushed %d file(s) (%d bytes zip).", len(resources), len(zip_bytes))
+
+
+def pull_incremental(
+    client: "UltronClient",
+    username: str,
+    name: str,
+    spec,
+    remote_files: "List[RemoteFileInfo]",
+    local_resources: Dict[str, str],
+) -> int:
+    """Incrementally pull remote changes to local workspace.
+
+    Compares remote sha256 with local content sha256:
+      - remote has file & sha256 differs (or local missing) → download & write
+      - local has file & remote doesn't → delete local
+
+    Returns the number of files changed. Raises if any download fails
+    (caller should NOT update baseline on exception).
+    """
+    root: Path = spec.workspace_root
+    remote_sha_map = {f.path: f.sha256 for f in remote_files}
+    remote_paths = set(remote_sha_map.keys())
+    local_paths = set(local_resources.keys())
+    changes = 0
+
+    # Download files that are new or changed on remote.
+    for rfile in remote_files:
+        local_content = local_resources.get(rfile.path)
+        if local_content is not None:
+            local_sha = sha256_content(local_content)
+            if local_sha == rfile.sha256:
+                continue  # identical, skip
+        # Need to download.
+        content = client.download_repo_file(username, name, rfile.path)
+        target = root / rfile.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        changes += 1
+        logger.info("  Downloaded: %s", rfile.path)
+
+    # Delete local files that no longer exist on remote.
+    for rel in sorted(local_paths - remote_paths):
+        target = root / rel
+        if target.exists():
+            target.unlink()
+            changes += 1
+            logger.info("  Deleted: %s", rel)
+
+    return changes
+
 

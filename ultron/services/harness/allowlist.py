@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 MAX_FILE_SIZE = 1 * 1024 * 1024  # 1 MB
 
 DEFAULT_AGENT_NAME = "default"
+ALL_AGENT_NAME = "all"
 
 
 class ClawWorkspaceAllowlist(ABC):
@@ -48,6 +49,12 @@ class ClawWorkspaceAllowlist(ABC):
         ``workspace_root`` (root-per-agent products) and/or to format ``{name}``
         placeholders in ``patterns`` (file-per-agent products). Ignored for
         single-agent products.
+
+        The special value ``"all"`` selects *every* sub-agent at once.  For
+        file-per-agent products this simply wildcards the ``{name}`` placeholder;
+        for root-per-agent products it lifts ``workspace_root`` one level up and
+        prefixes patterns so that each agent's files live under its own sub-path.
+
     :param local_dir: explicit workspace root override; when given, it replaces
         the product's default ``workspace_root`` (used by ``ultron upload
         --local_dir``).
@@ -58,6 +65,10 @@ class ClawWorkspaceAllowlist(ABC):
     ):
         self.agent_name = agent_name or DEFAULT_AGENT_NAME
         self._local_dir = Path(local_dir).expanduser() if local_dir else None
+
+    # ------------------------------------------------------------------
+    # Abstract interface
+    # ------------------------------------------------------------------
 
     @property
     @abstractmethod
@@ -76,13 +87,40 @@ class ClawWorkspaceAllowlist(ABC):
         """fnmatch globs (workspace-relative); may contain ``{name}``."""
         ...
 
+    # ------------------------------------------------------------------
+    # All-mode & watch constraint
+    # ------------------------------------------------------------------
+
+    def _is_all(self) -> bool:
+        """Whether we are in 'all sub-agents' mode."""
+        return self.agent_name == ALL_AGENT_NAME
+
+    @property
+    def supports_individual_watch(self) -> bool:
+        """Whether ``watch`` supports a single sub-agent name.
+
+        File-per-agent+shared products must override this to ``False`` because
+        shared files would cascade changes between repos.
+        """
+        return True
+
+    def _effective_patterns(self) -> List[str]:
+        """Patterns to match against.  Root-per-agent classes override this to
+        add an agent-name prefix in all mode."""
+        return self.patterns
+
+    # ------------------------------------------------------------------
+    # Core helpers
+    # ------------------------------------------------------------------
+
     @property
     def workspace_root(self) -> Path:
         """Effective root: ``local_dir`` override, else the product default."""
         return self._local_dir if self._local_dir is not None else self.default_workspace_root
 
     def _resolved_patterns(self) -> List[str]:
-        return [p.format(name=self.agent_name) for p in self.patterns]
+        name = "*" if self._is_all() else self.agent_name
+        return [p.format(name=name) for p in self._effective_patterns()]
 
     def _matches(self, rel_path: str, patterns: List[str]) -> bool:
         for pattern in patterns:
@@ -151,6 +189,10 @@ class NanobotWorkspaceAllowlist(ClawWorkspaceAllowlist):
         return "nanobot"
 
     @property
+    def supports_individual_watch(self) -> bool:
+        return False
+
+    @property
     def default_workspace_root(self) -> Path:
         return Path.home() / ".nanobot" / "workspace"
 
@@ -182,6 +224,10 @@ class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
 
     The default agent lives in ``~/.openclaw/workspace``; named agents live in
     ``~/.openclaw/workspace-<name>``.
+
+    In ``all`` mode, ``workspace_root`` lifts to ``~/.openclaw/`` and patterns
+    are prefixed with ``workspace*/`` to match both ``workspace/`` (default) and
+    ``workspace-<name>/`` directories.
     """
 
     @property
@@ -191,6 +237,8 @@ class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
     @property
     def default_workspace_root(self) -> Path:
         base = Path.home() / ".openclaw"
+        if self._is_all():
+            return base
         if self.agent_name in ("", DEFAULT_AGENT_NAME):
             return base / "workspace"
         return base / f"workspace-{self.agent_name}"
@@ -212,6 +260,11 @@ class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
             "skills/*/_meta.json",
             "skills/*/scripts/*",
         ]
+
+    def _effective_patterns(self) -> List[str]:
+        if self._is_all():
+            return [f"workspace*/{p}" for p in self.patterns]
+        return self.patterns
 
     def list_agents(self) -> List[str]:
         base = Path.home() / ".openclaw"
@@ -258,6 +311,10 @@ class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
 
     QwenPaw stores per-agent workspaces under ``~/.qwenpaw/workspaces/{id}``;
     the default agent lives in ``workspaces/default``.
+
+    In ``all`` mode, ``workspace_root`` lifts to ``~/.qwenpaw/workspaces/`` and
+    patterns are prefixed with ``*/`` so that each agent directory becomes a
+    path prefix in the collected resource dict.
     """
 
     @property
@@ -266,7 +323,10 @@ class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
 
     @property
     def default_workspace_root(self) -> Path:
-        return Path.home() / ".qwenpaw" / "workspaces" / self.agent_name
+        base = Path.home() / ".qwenpaw" / "workspaces"
+        if self._is_all():
+            return base
+        return base / self.agent_name
 
     @property
     def patterns(self) -> List[str]:
@@ -282,6 +342,11 @@ class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
             "skills/*/_meta.json",
             "skills/*/scripts/*",
         ]
+
+    def _effective_patterns(self) -> List[str]:
+        if self._is_all():
+            return [f"*/{p}" for p in self.patterns]
+        return self.patterns
 
     def list_agents(self) -> List[str]:
         base = Path.home() / ".qwenpaw" / "workspaces"
@@ -336,6 +401,10 @@ class QoderWorkspaceAllowlist(ClawWorkspaceAllowlist):
     @property
     def product_name(self) -> str:
         return "qoder"
+
+    @property
+    def supports_individual_watch(self) -> bool:
+        return False
 
     @property
     def default_workspace_root(self) -> Path:

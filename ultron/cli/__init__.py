@@ -133,8 +133,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument("--server", help="Server URL override.")
     p_watch.add_argument("--token", help="API token override.")
     p_watch.add_argument(
-        "--interval", type=int, default=3,
-        help="File poll interval in seconds (default: 3).",
+        "--interval", type=int, default=60,
+        help="Sync poll interval in seconds (default: 60).",
     )
     p_watch.set_defaults(func=cmd_watch)
 
