@@ -36,14 +36,19 @@ def _get_logger() -> logging.Logger:
     return _logger
 
 
-def watch_loop(spec, client, username: str, name: str, framework: str, interval: int = 60):
-    """Bidirectional sync loop: pull remote changes, push local changes.
+def watch_loop(spec, client, username: str, name: str, framework: str, interval: int = 60, *, push_only: bool = True):
+    """Sync loop: push local changes, optionally pull remote changes.
+
+    When push_only=True (default), only local changes are pushed to remote.
+    Remote changes are never pulled, protecting local files from accidental deletion.
+
+    When push_only=False, full bidirectional sync is enabled (pull remote changes too).
 
     Runs indefinitely until SIGTERM/SIGINT is received.
     """
     logger = _get_logger()
     root: Path = spec.workspace_root
-    logger.info("Watch started for %s/%s (root=%s, interval=%ds)", username, name, root, interval)
+    logger.info("Watch started for %s/%s (root=%s, interval=%ds, push_only=%s)", username, name, root, interval, push_only)
 
     # Load sync baseline from cache.
     state = load_sync_state(name)
@@ -96,7 +101,15 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
 
         # ---- Step 4: Four-quadrant decision ----
         try:
-            if remote_changed and local_changed:
+            if push_only:
+                # Push-only mode: never pull, never delete local files.
+                if local_changed:
+                    push_resources(client, username, name, framework, local_resources)
+                    logger.info("Pushed local changes.")
+                else:
+                    # Nothing to do — skip baseline update.
+                    pass
+            elif remote_changed and local_changed:
                 # Conflict: remote wins, backup local first.
                 backup_path = backup_local(spec, name)
                 pull_incremental(client, username, name, spec, remote_files, local_resources)
@@ -121,7 +134,34 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
             local_changed = False
 
         # ---- Step 5: Update baseline (only on success) ----
-        if remote_changed or local_changed:
+        if push_only:
+            # In push-only mode, update baseline only when local push succeeded.
+            if local_changed:
+                fresh = None
+                for _attempt in range(3):
+                    try:
+                        fresh = client.list_repo_files_detail(username, name)
+                        break
+                    except ApiError as e:
+                        if e.status == 500 and _attempt < 2:
+                            time.sleep(3)
+                            continue
+                        logger.error("Failed to refresh baseline: %s", e)
+                        break
+                    except Exception as exc:
+                        logger.error("Failed to refresh baseline: %s", exc)
+                        break
+                if fresh is not None:
+                    fresh_max = max((f.committed_date for f in fresh), default=0)
+                    managed = set(spec.collect().keys())
+                    fresh_sha = {f.path: f.sha256 for f in fresh if f.path in managed}
+                    state["last_commit_date"] = fresh_max
+                    state["remote_files"] = fresh_sha
+                else:
+                    fresh_max = state["last_commit_date"]
+                    fresh_sha = state["remote_files"]
+                save_sync_state(name, fresh_max, fresh_sha)
+        elif remote_changed or local_changed:
             fresh = None
             for _attempt in range(3):
                 try:

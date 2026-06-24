@@ -136,6 +136,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--interval", type=int, default=60,
         help="Sync poll interval in seconds (default: 60).",
     )
+    p_watch.add_argument(
+        "--push-only", action=argparse.BooleanOptionalAction, default=True,
+        dest="push_only",
+        help="Only push local changes, never pull remote changes (default: True). "
+             "Use --no-push-only to enable bidirectional sync.",
+    )
     p_watch.set_defaults(func=cmd_watch)
 
     # ---- stop ----

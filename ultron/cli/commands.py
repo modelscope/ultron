@@ -306,13 +306,15 @@ def cmd_watch(args) -> int:
         pass  # repo not found or unreachable — proceed, first push will create it
 
     interval = getattr(args, "interval", 60) or 60
+    push_only = getattr(args, "push_only", True)
     print(f"Starting bidirectional sync for {username}/{repo} (interval={interval}s)...")
     print(f"  Framework: {framework}")
     print(f"  Root: {spec.workspace_root}")
+    print(f"  Push-only: {push_only}")
     print(f"  Logs: {pid_file().parent / 'logs' / 'watch.log'}")
     print(f"  Stop: ultron stop")
 
-    daemonize(watch_loop, spec, client, username, repo, framework, interval)
+    daemonize(watch_loop, spec, client, username, repo, framework, interval, push_only=push_only)
     # If we reach here, we are the parent process (daemon forked successfully).
     print(f"  Watch started (PID file: {pf}).")
     return 0

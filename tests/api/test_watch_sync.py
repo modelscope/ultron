@@ -46,7 +46,7 @@ from ultron.services.harness.allowlist import (
 # Config
 # ---------------------------------------------------------------------------
 SERVER = os.environ.get("SERVER", "http://pre.modelscope.cn")
-TOKEN = os.environ.get("TOKEN", "ms-71108144-5956-4642-b50a-2b2f7459f044")
+TOKEN = os.environ.get("TOKEN", "")
 AGENT_PREFIX = "test-watch"
 REQUEST_INTERVAL = int(os.environ.get("REQUEST_INTERVAL", "8"))
 
@@ -72,6 +72,7 @@ def _watch_process_target(
     local_dir: str,
     repo_name: str,
     interval: int,
+    push_only: bool = True,
 ):
     """Run watch_loop in a child process. Stopped by SIGTERM."""
     # Set data dir so cache/state files go to the right place
@@ -86,7 +87,7 @@ def _watch_process_target(
     client = UltronClient(server, token)
     username = client.login(token)
 
-    watch_loop(spec, client, username, repo_name, framework, interval=interval)
+    watch_loop(spec, client, username, repo_name, framework, interval=interval, push_only=push_only)
 
 
 # ===========================================================================
@@ -139,11 +140,11 @@ class TestWatchSync(unittest.TestCase):
         file_id = self.client.upload_file(files)
         self.client.create_repo(self.username, name, framework, system_prompt_files=file_id)
 
-    def _start_watch(self, framework: str, agent_name: str, local_dir: str, repo_name: str) -> multiprocessing.Process:
+    def _start_watch(self, framework: str, agent_name: str, local_dir: str, repo_name: str, push_only: bool = True) -> multiprocessing.Process:
         """Start a watch_loop in a child process, return the Process."""
         p = multiprocessing.Process(
             target=_watch_process_target,
-            args=(SERVER, TOKEN, self._data_dir, framework, agent_name, local_dir, repo_name, WATCH_INTERVAL),
+            args=(SERVER, TOKEN, self._data_dir, framework, agent_name, local_dir, repo_name, WATCH_INTERVAL, push_only),
             daemon=True,
         )
         p.start()
@@ -199,10 +200,10 @@ class TestWatchSync(unittest.TestCase):
             self._cleanup(local_dir)
 
     # -----------------------------------------------------------------------
-    # 02. qoder all: remote change → pull to local
+    # 02. qoder all: remote change → pull to local (bidirectional mode)
     # -----------------------------------------------------------------------
     def test_02_qoder_all_remote_pull(self):
-        """Remote change should be pulled to local via watch_loop."""
+        """Remote change should be pulled to local via watch_loop (push_only=False)."""
         repo_name = f"{AGENT_PREFIX}-qoder-pull"
         files = {
             "AGENTS.md": "# Agents\nOriginal.\n",
@@ -212,7 +213,7 @@ class TestWatchSync(unittest.TestCase):
         local_dir = self._create_local(files)
         proc = None
         try:
-            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name)
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name, push_only=False)
             self._wait_cycles(2)
 
             # Simulate remote change
@@ -237,10 +238,10 @@ class TestWatchSync(unittest.TestCase):
             self._cleanup(local_dir)
 
     # -----------------------------------------------------------------------
-    # 03. qwenpaw all: bidirectional sync
+    # 03. qwenpaw all: bidirectional sync (push_only=False)
     # -----------------------------------------------------------------------
     def test_03_qwenpaw_all_bidirectional(self):
-        """qwenpaw all mode: local push then remote pull via watch_loop."""
+        """qwenpaw all mode: local push then remote pull via watch_loop (push_only=False)."""
         repo_name = f"{AGENT_PREFIX}-qwenpaw-bi"
         files = {
             "bot-a/SOUL.md": "# Soul\nBot A identity.\n",
@@ -250,7 +251,7 @@ class TestWatchSync(unittest.TestCase):
         local_dir = self._create_local(files)
         proc = None
         try:
-            proc = self._start_watch("qwenpaw", ALL_AGENT_NAME, local_dir, repo_name)
+            proc = self._start_watch("qwenpaw", ALL_AGENT_NAME, local_dir, repo_name, push_only=False)
             self._wait_cycles(2)
 
             # Verify push happened
@@ -313,10 +314,10 @@ class TestWatchSync(unittest.TestCase):
             self._cleanup(local_dir)
 
     # -----------------------------------------------------------------------
-    # 05. Conflict: both sides changed → remote wins
+    # 05. Conflict: both sides changed → remote wins (push_only=False)
     # -----------------------------------------------------------------------
     def test_05_conflict_remote_wins(self):
-        """When both local and remote change, remote should win (watch_loop)."""
+        """When both local and remote change, remote should win (push_only=False)."""
         repo_name = f"{AGENT_PREFIX}-conflict"
         files = {
             "AGENTS.md": "# Agents\nBaseline.\n",
@@ -329,7 +330,7 @@ class TestWatchSync(unittest.TestCase):
             self._upload_remote(repo_name, "qoder", files)
             _wait(8)
 
-            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name)
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name, push_only=False)
             self._wait_cycles(2)
 
             # Stop watch temporarily to make simultaneous changes
@@ -349,7 +350,7 @@ class TestWatchSync(unittest.TestCase):
             )
 
             # Restart watch — should detect conflict and pull remote
-            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name)
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name, push_only=False)
             self._wait_cycles(3)
 
             # Verify local has REMOTE content (remote wins)
@@ -400,10 +401,10 @@ class TestWatchSync(unittest.TestCase):
             self._cleanup(local_dir)
 
     # -----------------------------------------------------------------------
-    # 07. Delete propagation: remote delete → local
+    # 07. Delete propagation: remote delete → local (push_only=False)
     # -----------------------------------------------------------------------
     def test_07_remote_delete_pulls(self):
-        """Remote file removal should delete local file via watch_loop."""
+        """Remote file removal should delete local file via watch_loop (push_only=False)."""
         repo_name = f"{AGENT_PREFIX}-del-remote"
         files = {
             "AGENTS.md": "# Agents\nStay.\n",
@@ -412,7 +413,7 @@ class TestWatchSync(unittest.TestCase):
         local_dir = self._create_local(files)
         proc = None
         try:
-            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name)
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name, push_only=False)
             self._wait_cycles(2)
 
             # Remote removes a file (re-upload without it)
@@ -432,7 +433,7 @@ class TestWatchSync(unittest.TestCase):
             self._cleanup(local_dir)
 
     # -----------------------------------------------------------------------
-    # 08. Multi-process: concurrent watches on different repos
+    # 08. Multi-process: concurrent watches on different repos (push_only=False)
     # -----------------------------------------------------------------------
     def test_08_multi_process_concurrent_watches(self):
         """Multiple watch processes for different repos sync independently."""
@@ -453,8 +454,8 @@ class TestWatchSync(unittest.TestCase):
         proc1 = None
         proc2 = None
         try:
-            proc1 = self._start_watch("qoder", ALL_AGENT_NAME, local1, repo1)
-            proc2 = self._start_watch("qwenpaw", repo2, local2, repo2)
+            proc1 = self._start_watch("qoder", ALL_AGENT_NAME, local1, repo1, push_only=False)
+            proc2 = self._start_watch("qwenpaw", repo2, local2, repo2, push_only=False)
 
             # Wait for initial push
             self._wait_cycles(3)
@@ -719,6 +720,148 @@ class TestWatchSync(unittest.TestCase):
             content2 = self.client.download_repo_file(
                 self.username, repo_name, "skills/format/SKILL.md")
             self.assertIn("Version 1", content2)
+        finally:
+            if proc:
+                self._stop_watch(proc)
+            self._cleanup(local_dir)
+
+    # -----------------------------------------------------------------------
+    # 17. push_only=True: remote changes do NOT pull to local
+    # -----------------------------------------------------------------------
+    def test_17_push_only_ignores_remote_changes(self):
+        """With push_only=True (default), remote changes should NOT be pulled."""
+        repo_name = f"{AGENT_PREFIX}-push-only"
+        files = {
+            "AGENTS.md": "# Agents\nLocal original.\n",
+            "rules/style.md": "# Style\nLocal rule.\n",
+        }
+        local_dir = self._create_local(files)
+        proc = None
+        try:
+            # push_only=True is the default
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name, push_only=True)
+            # Wait for initial push
+            self._wait_cycles(2)
+
+            # Simulate remote change (add file + modify existing)
+            remote_files = dict(files)
+            remote_files["AGENTS.md"] = "# Agents\nRemote modification.\n"
+            remote_files["commands/new.md"] = "# New\nAdded remotely.\n"
+            self._upload_remote(repo_name, "qoder", remote_files)
+            _wait(8)
+
+            # Wait several cycles
+            self._wait_cycles(3)
+
+            # Local file should NOT be modified (push_only protects local)
+            local_content = (Path(local_dir) / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertIn("Local original", local_content)
+            self.assertNotIn("Remote modification", local_content)
+
+            # Remote-only file should NOT appear locally
+            new_file = Path(local_dir) / "commands" / "new.md"
+            self.assertFalse(new_file.exists(), "remote-only file should NOT be pulled in push_only mode")
+        finally:
+            if proc:
+                self._stop_watch(proc)
+            self._cleanup(local_dir)
+
+    # -----------------------------------------------------------------------
+    # 18. push_only=True: remote delete does NOT delete local files
+    # -----------------------------------------------------------------------
+    def test_18_push_only_prevents_local_deletion(self):
+        """With push_only=True, files deleted on remote should NOT be deleted locally.
+
+        This is the key safety feature: prevents accidental data loss when
+        remote state diverges (e.g. server-side reset, other client overwrites).
+        """
+        repo_name = f"{AGENT_PREFIX}-push-only-del"
+        files = {
+            "AGENTS.md": "# Agents\nKeep me safe.\n",
+            "rules/important.md": "# Important\nMust not be deleted.\n",
+            "agents/coder.md": "# Coder\nValuable local file.\n",
+        }
+        local_dir = self._create_local(files)
+        proc = None
+        try:
+            # push_only=True (default)
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name, push_only=True)
+            # Wait for initial push
+            self._wait_cycles(2)
+
+            # Simulate remote catastrophe: someone overwrites remote with fewer files
+            reduced_remote = {"AGENTS.md": "# Agents\nOnly this survives on remote.\n"}
+            self._upload_remote(repo_name, "qoder", reduced_remote)
+            _wait(8)
+
+            # Wait for sync cycles
+            self._wait_cycles(3)
+
+            # ALL local files must still exist (push_only never deletes local)
+            self.assertTrue(
+                (Path(local_dir) / "rules" / "important.md").exists(),
+                "push_only must protect local files from remote-side deletion"
+            )
+            self.assertTrue(
+                (Path(local_dir) / "agents" / "coder.md").exists(),
+                "push_only must protect local files from remote-side deletion"
+            )
+            self.assertTrue(
+                (Path(local_dir) / "AGENTS.md").exists(),
+                "AGENTS.md must still exist locally"
+            )
+
+            # Local content should remain unchanged
+            content = (Path(local_dir) / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertIn("Keep me safe", content)
+            self.assertNotIn("Only this survives", content)
+        finally:
+            if proc:
+                self._stop_watch(proc)
+            self._cleanup(local_dir)
+
+    # -----------------------------------------------------------------------
+    # 19. push_only=True: conflict scenario → local push wins (no remote pull)
+    # -----------------------------------------------------------------------
+    def test_19_push_only_conflict_local_wins(self):
+        """With push_only=True, even when remote changed, local still pushes
+        (remote never overwrites local)."""
+        repo_name = f"{AGENT_PREFIX}-push-only-conflict"
+        files = {
+            "AGENTS.md": "# Agents\nBaseline.\n",
+        }
+        local_dir = self._create_local(files)
+        proc = None
+        try:
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name, push_only=True)
+            self._wait_cycles(2)
+
+            # Stop watch
+            self._stop_watch(proc)
+            proc = None
+            _wait(REQUEST_INTERVAL)
+
+            # Remote changes
+            self._upload_remote(repo_name, "qoder", {"AGENTS.md": "# Agents\nRemote version.\n"})
+            _wait(8)
+
+            # Local changes
+            (Path(local_dir) / "AGENTS.md").write_text(
+                "# Agents\nLocal version should win.\n", encoding="utf-8"
+            )
+
+            # Restart with push_only=True
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name, push_only=True)
+            self._wait_cycles(3)
+
+            # Local file should retain LOCAL content (not overwritten by remote)
+            local_content = (Path(local_dir) / "AGENTS.md").read_text(encoding="utf-8")
+            self.assertIn("Local version should win", local_content)
+            self.assertNotIn("Remote version", local_content)
+
+            # Remote should eventually get the local version pushed
+            remote_content = self.client.download_repo_file(self.username, repo_name, "AGENTS.md")
+            self.assertIn("Local version should win", remote_content)
         finally:
             if proc:
                 self._stop_watch(proc)

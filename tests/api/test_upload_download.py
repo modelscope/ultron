@@ -45,7 +45,7 @@ from ultron.services.harness.allowlist import (
 # Config
 # ---------------------------------------------------------------------------
 SERVER = os.environ.get("SERVER", "http://pre.modelscope.cn")
-TOKEN = os.environ.get("TOKEN", "ms-71108144-5956-4642-b50a-2b2f7459f044")
+TOKEN = os.environ.get("TOKEN", "")
 AGENT_PREFIX = "test-updown"
 
 # Throttle between each test method to avoid 429 and WAF blocks
