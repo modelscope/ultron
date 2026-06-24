@@ -59,8 +59,8 @@ def sync_state_file(name: str) -> Path:
 def load_sync_state(name: str) -> dict:
     """Load sync state from disk.
 
-    Returns ``{"last_commit_date": 0, "remote_files": {}}`` if the file
-    does not exist or is corrupted.
+    Returns ``{"last_commit_date": 0, "remote_files": {}}``
+    if the file does not exist or is corrupted.
     """
     default: dict = {"last_commit_date": 0, "remote_files": {}}
     path = sync_state_file(name)
@@ -72,6 +72,8 @@ def load_sync_state(name: str) -> dict:
             return default
         data.setdefault("last_commit_date", 0)
         data.setdefault("remote_files", {})
+        # Drop legacy field if present.
+        data.pop("local_files", None)
         return data
     except (json.JSONDecodeError, OSError):
         return default
@@ -82,7 +84,10 @@ def save_sync_state(name: str, last_commit_date: int, remote_files: Dict[str, st
     path = sync_state_file(name)
     tmp = path.with_suffix(".tmp")
     payload = json.dumps(
-        {"last_commit_date": last_commit_date, "remote_files": remote_files},
+        {
+            "last_commit_date": last_commit_date,
+            "remote_files": remote_files,
+        },
         ensure_ascii=False, indent=2,
     )
     tmp.write_text(payload, encoding="utf-8")

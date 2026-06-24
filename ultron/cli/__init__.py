@@ -66,8 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Repository / sub-agent name to download.",
     )
     p_dl.add_argument(
-        "--framework", "-f",
-        help="Source framework / bot type (default: read from the stored repository).",
+        "--framework", "-f", required=True,
+        help="Source framework / bot type (used to derive the repo name).",
     )
     p_dl.add_argument(
         "--target", "-t",
@@ -126,8 +126,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Agent framework / bot type.",
     )
     p_watch.add_argument(
-        "--name", "-n", required=True,
-        help="Sub-agent / repository name.",
+        "--name", "-n",
+        help="Sub-agent name (default: 'all' = full-scope sync).",
     )
     p_watch.add_argument("--local_dir", "-d", help="Override workspace root.")
     p_watch.add_argument("--server", help="Server URL override.")
@@ -142,22 +142,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_stop = sub.add_parser("stop", help="Stop the background watch process.")
     p_stop.set_defaults(func=cmd_stop)
 
-    # ---- recover ----
-    p_recover = sub.add_parser(
-        "recover",
-        help="Recover agent files from a backup zip in ~/.ultron/cache/.",
+    # ---- restore ----
+    p_restore = sub.add_parser(
+        "restore",
+        help="Restore agent files from a backup zip.",
     )
-    p_recover.add_argument(
-        "filename",
-        help="Backup zip filename (e.g. my-agent_20260609_143022.zip).",
+    p_restore.add_argument(
+        "target", nargs="?", default=None,
+        help="'last' (most recent backup) or a zip filename (with/without .zip extension).",
     )
-    p_recover.add_argument(
-        "--framework", "-f", required=True,
-        help="Agent framework (needed to locate workspace root).",
+    p_restore.add_argument(
+        "--list", action="store_true",
+        help="List all available backups and exit.",
     )
-    p_recover.add_argument("--name", "-n", help="Agent name (inferred from filename if omitted).")
-    p_recover.add_argument("--local_dir", "-d", help="Override workspace root.")
-    p_recover.set_defaults(func=cmd_recover)
+    p_restore.add_argument(
+        "--framework", "-f",
+        help="Agent framework (inferred from backup filename if omitted).",
+    )
+    p_restore.add_argument("--name", "-n", help="Agent name (inferred from filename if omitted).")
+    p_restore.add_argument("--local_dir", "-d", help="Override workspace root.")
+    p_restore.set_defaults(func=cmd_recover)
 
     return parser
 

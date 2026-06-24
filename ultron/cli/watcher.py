@@ -160,7 +160,11 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
                 fresh_sha = {f.path: f.sha256 for f in fresh}
                 state["last_commit_date"] = fresh_max
                 state["remote_files"] = fresh_sha
-                save_sync_state(name, fresh_max, fresh_sha)
+            else:
+                fresh_max = state["last_commit_date"]
+                fresh_sha = state["remote_files"]
+
+            save_sync_state(name, fresh_max, fresh_sha)
 
         # ---- Optional: local pipeline ----
         if local_ultron and not sessions_dirty:

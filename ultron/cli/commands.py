@@ -20,6 +20,28 @@ def _fail(message: str) -> int:
     return 1
 
 
+def _repo_name(framework: str, name: str) -> str:
+    """Derive the remote repository name from framework and sub-agent name.
+
+    - name is "all" or empty: use framework alone (``all`` is the default scope)
+    - Both provided: ``{framework}-{name}``
+    - Only one provided: use that value directly
+    - Neither provided: ``"default"``
+    """
+    fw = (framework or "").strip()
+    n = (name or "").strip()
+    # "all" means full-scope sync — not a distinct sub-agent, so omit from repo name.
+    if n == ALL_AGENT_NAME:
+        n = ""
+    if fw and n:
+        return f"{fw}-{n}"
+    if fw:
+        return fw
+    if n:
+        return n
+    return "default"
+
+
 def _frameworks() -> str:
     return ", ".join(sorted(ALLOWLIST_REGISTRY))
 
@@ -117,17 +139,18 @@ def cmd_upload(args) -> int:
 
     client = UltronClient(server, token)
 
+    repo = _repo_name(framework, args.name)
     # Step 1: upload files -> get file_id
     file_id = client.upload_file(resources)
     # Step 2: create/update agent with file_id
     result = client.create_repo(
-        username, args.name, framework,
+        username, repo, framework,
         system_prompt_files=file_id,
     )
 
     print(
         f"\nUploaded {len(resources)} file(s) to "
-        f"{username}/{args.name}."
+        f"{username}/{repo}."
     )
     return 0
 
@@ -135,6 +158,12 @@ def cmd_upload(args) -> int:
 def cmd_download(args) -> int:
     if not args.name:
         return _fail("--name is required (the repository / sub-agent name)")
+    if not args.framework:
+        return _fail("--framework is required for download (to derive repo name)")
+
+    framework = args.framework
+    if framework not in ALLOWLIST_REGISTRY:
+        return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
 
     server = config.resolve_server(args.server)
     token = config.resolve_token(args.token)
@@ -144,24 +173,18 @@ def cmd_download(args) -> int:
     if not username:
         return _fail("missing username; run 'ultron login' again.")
 
+    repo = _repo_name(framework, args.name)
     client = UltronClient(server, token)
     try:
-        info = client.repo_info(username, args.name)
+        info = client.repo_info(username, repo)
         if info is None:
-            return _fail(f"repository {username}/{args.name} not found.")
-        # Framework: explicit flag wins, else the value stored on the repo.
-        framework = args.framework or info.get("Framework", "")
-        if framework not in ALLOWLIST_REGISTRY:
-            return _fail(
-                f"unknown framework '{framework}'. Pass --framework explicitly. "
-                f"Available: {_frameworks()}"
-            )
-        paths = client.list_repo_files(username, args.name)
+            return _fail(f"repository {username}/{repo} not found.")
+        paths = client.list_repo_files(username, repo)
         if not paths:
-            return _fail(f"repository {username}/{args.name} has no files.")
+            return _fail(f"repository {username}/{repo} has no files.")
         # List then fetch each file via its download link, one at a time.
         resources = {
-            p: client.download_repo_file(username, args.name, p) for p in paths
+            p: client.download_repo_file(username, repo, p) for p in paths
         }
     except ApiError as e:
         return _fail(f"download failed ({e.detail})")
@@ -176,7 +199,7 @@ def cmd_download(args) -> int:
 
     spec = _build_allowlist(target_fw, args.name, args.local_dir)
     root = spec.workspace_root
-    print(f"{len(resources)} file(s) for {username}/{args.name} (framework={target_fw}):")
+    print(f"{len(resources)} file(s) for {username}/{repo} (framework={target_fw}):")
     for rel in sorted(resources):
         print(f"  {rel} -> {root / rel}")
 
@@ -239,8 +262,9 @@ def cmd_watch(args) -> int:
     framework = args.framework
     if framework not in ALLOWLIST_REGISTRY:
         return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
-    if not args.name:
-        return _fail("--name is required")
+
+    # Default --name to "all" (full-scope sync).
+    name = args.name or ALL_AGENT_NAME
 
     server = config.resolve_server(args.server)
     token = config.resolve_token(args.token)
@@ -255,20 +279,22 @@ def cmd_watch(args) -> int:
     if pf.exists():
         return _fail(f"watch already running (PID file: {pf}). Run 'ultron stop' first.")
 
-    spec = _build_allowlist(framework, args.name, args.local_dir)
+    spec = _build_allowlist(framework, name, args.local_dir)
     client = UltronClient(server, token)
 
     # Guard: file-per-agent frameworks must use --name all for watch.
-    if not spec.supports_individual_watch and args.name != ALL_AGENT_NAME:
+    if not spec.supports_individual_watch and name != ALL_AGENT_NAME:
         return _fail(
             f"'{framework}' has shared files across sub-agents; "
             f"watch only supports '--name all' to avoid sync conflicts. "
-            f"Use 'ultron upload/download -n {args.name}' for individual sub-agent operations."
+            f"Use 'ultron upload/download -n {name}' for individual sub-agent operations."
         )
+
+    repo = _repo_name(framework, name)
 
     # Guard: check remote repo framework matches local.
     try:
-        info = client.repo_info(username, args.name)
+        info = client.repo_info(username, repo)
         if info:
             remote_fw = info.get("Framework") or info.get("framework") or ""
             if remote_fw and remote_fw != framework:
@@ -280,13 +306,13 @@ def cmd_watch(args) -> int:
         pass  # repo not found or unreachable — proceed, first push will create it
 
     interval = getattr(args, "interval", 60) or 60
-    print(f"Starting bidirectional sync for {username}/{args.name} (interval={interval}s)...")
+    print(f"Starting bidirectional sync for {username}/{repo} (interval={interval}s)...")
     print(f"  Framework: {framework}")
     print(f"  Root: {spec.workspace_root}")
     print(f"  Logs: {pid_file().parent / 'logs' / 'watch.log'}")
     print(f"  Stop: ultron stop")
 
-    daemonize(watch_loop, spec, client, username, args.name, framework, interval)
+    daemonize(watch_loop, spec, client, username, repo, framework, interval)
     # If we reach here, we are the parent process (daemon forked successfully).
     print(f"  Watch started (PID file: {pf}).")
     return 0
@@ -305,42 +331,117 @@ def cmd_stop(args) -> int:
 
 
 def cmd_recover(args) -> int:
-    """Recover agent files from a backup zip in the cache directory."""
+    """Restore agent files from a backup zip.
+
+    Supports:
+      - ``ultron restore last``        → restore the most recent backup
+      - ``ultron restore <filename>``   → restore a specific backup (with/without .zip)
+      - ``ultron restore --list``       → list all available backups
+    """
     from .cache import cache_dir
+    import datetime as _dt
 
+    cdir = cache_dir()
+
+    # Collect all backup zips in cache dir (pattern: *_YYYYMMDD_HHMMSS.zip)
+    backups = sorted(
+        (f for f in cdir.iterdir() if f.suffix == ".zip" and f.is_file()),
+        key=lambda f: f.stat().st_mtime,
+    )
+
+    # --list mode: enumerate backups and exit
+    if args.list:
+        if not backups:
+            print("No backups found.")
+            return 0
+        print(f"Backups in {cdir}:\n")
+        last = backups[-1]
+        for f in backups:
+            mtime = _dt.datetime.fromtimestamp(f.stat().st_mtime)
+            marker = "  [LAST]" if f == last else ""
+            print(f"  {f.name}  ({mtime:%Y-%m-%d %H:%M:%S}){marker}")
+        print(f"\n{len(backups)} backup(s) total.")
+        return 0
+
+    # Restore mode: need a target
+    target = args.target
+    if not target:
+        return _fail("specify a target: 'last' or a backup filename. Use --list to see available backups.")
+
+    # Resolve target to a zip path
+    if target == "last":
+        if not backups:
+            return _fail("no backups found.")
+        zip_path = backups[-1]
+    else:
+        # Normalize: add .zip if missing
+        fname = target if target.endswith(".zip") else f"{target}.zip"
+        zip_path = cdir / fname
+        if not zip_path.exists():
+            # Try as absolute/relative path
+            zip_path = Path(target)
+        if not zip_path.exists():
+            return _fail(f"backup not found: {fname} (looked in {cdir})")
+
+    # Determine framework and workspace root
     framework = args.framework
-    if framework not in ALLOWLIST_REGISTRY:
+    if framework and framework not in ALLOWLIST_REGISTRY:
         return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
-
-    filename = args.filename
-    zip_path = cache_dir() / filename
-    if not zip_path.exists():
-        # Try exact path if user gave full path.
-        zip_path = Path(filename)
-    if not zip_path.exists():
-        return _fail(f"backup file not found: {filename} (looked in {cache_dir()})")
 
     name = args.name
     if not name:
-        # Infer name from filename: "my-agent_20260609_143022.zip" -> "my-agent"
-        stem = zip_path.stem  # e.g. "my-agent_20260609_143022"
+        # Infer name from filename: "qoder_20260609_143022.zip" -> "qoder"
+        stem = zip_path.stem
         parts = stem.rsplit("_", 2)
         name = parts[0] if len(parts) >= 3 else stem
 
-    spec = _build_allowlist(framework, name, args.local_dir)
+    if not framework:
+        # Try to infer framework from the name (e.g., "qoder" -> framework "qoder")
+        if name in ALLOWLIST_REGISTRY:
+            framework = name
+        else:
+            return _fail("cannot infer framework. Pass --framework explicitly.")
+
+    spec = _build_allowlist(framework, "all", args.local_dir)
     root = spec.workspace_root
 
-    print(f"Recovering {zip_path.name} -> {root}")
-    count = 0
+    # ---- Step 1: Backup current local files before any modification ----
+    from .sync import backup_local
+    current_resources = spec.collect()
+    if current_resources:
+        pre_restore_backup = backup_local(spec, name)
+        print(f"Pre-restore backup: {pre_restore_backup.name}")
+    else:
+        print("No existing files to backup.")
+
+    # ---- Step 2: Determine which files are in the zip ----
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        zip_entries = set(
+            info.filename for info in zf.infolist() if not info.is_dir()
+        )
+
+    # ---- Step 3: Delete local files that are NOT in the zip ----
+    deleted = 0
+    for rel in sorted(current_resources.keys()):
+        if rel not in zip_entries:
+            target_file = root / rel
+            if target_file.exists():
+                target_file.unlink()
+                print(f"  Removed: {rel}")
+                deleted += 1
+
+    # ---- Step 4: Extract zip (overwrite matched files) ----
+    print(f"Restoring {zip_path.name} -> {root}")
+    restored = 0
     with zipfile.ZipFile(zip_path, "r") as zf:
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            target = root / info.filename
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(zf.read(info.filename))
-            print(f"  {info.filename}")
-            count += 1
+            file_target = root / info.filename
+            file_target.parent.mkdir(parents=True, exist_ok=True)
+            file_target.write_bytes(zf.read(info.filename))
+            print(f"  Restored: {info.filename}")
+            restored += 1
 
-    print(f"\nRecovered {count} file(s) to {root}.")
+    print(f"\nRestored {restored} file(s), removed {deleted} extra file(s).")
     return 0
