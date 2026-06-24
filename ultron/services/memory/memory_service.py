@@ -71,7 +71,6 @@ class MemoryService(MemoryConsolidationMixin):
         config: Optional[UltronConfig] = None,
         llm_service=None,
         llm_orchestrator=None,
-        cluster_service=None,
     ):
         self.db = database
         self.embedding = embedding_service
@@ -79,7 +78,6 @@ class MemoryService(MemoryConsolidationMixin):
         self.config = config or default_config
         self.llm_service = llm_service
         self.llm_orchestrator = llm_orchestrator
-        self.cluster_service = cluster_service
         self.intent_analyzer = IntentAnalyzer(llm_service=llm_service)
         self._merge_count_tokens = get_token_counter(
             self.config.llm_token_count_encoding
@@ -747,9 +745,9 @@ class MemoryService(MemoryConsolidationMixin):
 
     def _try_assign_to_cluster(self, record: MemoryRecord) -> None:
         """Assign a newly uploaded memory to a knowledge cluster. Failures are silent."""
-        if self.cluster_service is None:
-            return
         try:
-            self.cluster_service.assign_memory_to_cluster(record)
+            from ultron import server_state
+            if server_state.cluster_service is not None:
+                server_state.cluster_service.assign_memory_to_cluster(record)
         except Exception:
             pass

@@ -36,12 +36,10 @@ def _get_logger() -> logging.Logger:
     return _logger
 
 
-def watch_loop(spec, client, username: str, name: str, framework: str, interval: int = 60, sessions_dir: str = None):
+def watch_loop(spec, client, username: str, name: str, framework: str, interval: int = 60):
     """Bidirectional sync loop: pull remote changes, push local changes.
 
     Runs indefinitely until SIGTERM/SIGINT is received.
-    If *sessions_dir* is provided and a valid LLM API key is configured, also runs the
-    local memory/skill extraction pipeline periodically.
     """
     logger = _get_logger()
     root: Path = spec.workspace_root
@@ -50,28 +48,7 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
     # Load sync baseline from cache.
     state = load_sync_state(name)
 
-    # Optional: local pipeline (requires ULTRON_API_KEY or equivalent)
-    local_ultron = None
-    if sessions_dir:
-        try:
-            from ultron import Ultron, load_ultron_dotenv
-            load_ultron_dotenv()
-            local_ultron = Ultron()
-            if not local_ultron.llm_service.is_available:
-                logger.info("Local pipeline skipped: no LLM API key configured")
-                local_ultron = None
-            else:
-                logger.info("Local pipeline enabled (sessions_dir=%s)", sessions_dir)
-        except Exception as exc:
-            logger.warning("Local pipeline init failed (skipped): %s", exc)
-            local_ultron = None
-
     running = True
-    # Run pipeline every N poll cycles (e.g. 5 * 60s = ~5 min)
-    pipeline_every_n_cycles = 5
-    cycle_counter = 0
-    sessions_dirty = True  # run once at start to catch up
-    last_sessions_mtime = 0.0
 
     def _handle_term(signum, frame):
         nonlocal running
@@ -135,7 +112,6 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
         except Exception as exc:
             # Operation failed: do NOT update baseline; retry next cycle.
             logger.error("Sync failed (will retry): %s", exc)
-            # Fall through to pipeline check, but skip baseline update.
             remote_changed = False
             local_changed = False
 
@@ -165,38 +141,6 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
                 fresh_sha = state["remote_files"]
 
             save_sync_state(name, fresh_max, fresh_sha)
-
-        # ---- Optional: local pipeline ----
-        if local_ultron and not sessions_dirty:
-            try:
-                sessions_path = Path(sessions_dir)
-                if sessions_path.is_dir():
-                    current_mtime = max(
-                        (f.stat().st_mtime for f in sessions_path.rglob('*.jsonl') if f.is_file()),
-                        default=0.0,
-                    )
-                    if current_mtime > last_sessions_mtime:
-                        sessions_dirty = True
-            except Exception:
-                pass
-
-        cycle_counter += 1
-        if local_ultron and sessions_dirty and cycle_counter % pipeline_every_n_cycles == 0:
-            try:
-                from ultron.services.background import run_pipeline_cycle
-                local_ultron.ingestion_service.ingest(
-                    [sessions_dir], agent_id=name
-                )
-                result = run_pipeline_cycle(local_ultron)
-                if any(v for v in result.values() if isinstance(v, int) and v > 0):
-                    logger.info("Pipeline cycle result: %s", result)
-                    last_sessions_mtime = time.time()
-                else:
-                    sessions_dirty = False
-                    last_sessions_mtime = time.time()
-            except Exception as exc:
-                logger.warning("Pipeline cycle failed: %s", exc)
-                sessions_dirty = False
 
     logger.info("Watch stopped (signal received).")
     # Cleanup PID file.
