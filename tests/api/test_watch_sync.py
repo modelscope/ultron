@@ -644,5 +644,86 @@ class TestWatchSync(unittest.TestCase):
                 sf.unlink()
 
 
+    # -----------------------------------------------------------------------
+    # 15. All files share a common prefix (e.g. skills/) → wrapper prevents
+    #     server from stripping the prefix
+    # -----------------------------------------------------------------------
+    def test_15_common_prefix_preserved(self):
+        """When ALL files share a top-level prefix, the zip wrapper ensures
+        the server does not strip that prefix after upload.
+
+        Without the wrapper, zip entries like skills/lint/SKILL.md would lose
+        the 'skills/' prefix after the server strips the first directory level.
+        With the wrapper, entries become agent/skills/lint/SKILL.md; the server
+        strips 'agent/' and the real path (skills/...) is preserved.
+        """
+        repo_name = f"{AGENT_PREFIX}-prefix"
+        # All files share the 'skills/' top-level prefix
+        files = {
+            "skills/lint/SKILL.md": "# Lint\nRun linter.\n",
+            "skills/lint/scripts/run.sh": "#!/bin/bash\nflake8 .\n",
+            "skills/format/SKILL.md": "# Format\nAuto-format code.\n",
+        }
+        local_dir = self._create_local(files)
+        proc = None
+        try:
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name)
+            self._wait_cycles(2)
+
+            # Verify remote paths retain the 'skills/' prefix
+            remote = self.client.list_repo_files(self.username, repo_name)
+            self.assertIn("skills/lint/SKILL.md", remote,
+                          "skills/ prefix must be preserved on server")
+            self.assertIn("skills/lint/scripts/run.sh", remote)
+            self.assertIn("skills/format/SKILL.md", remote)
+
+            # Verify content
+            content = self.client.download_repo_file(
+                self.username, repo_name, "skills/lint/SKILL.md")
+            self.assertIn("Run linter", content)
+        finally:
+            if proc:
+                self._stop_watch(proc)
+            self._cleanup(local_dir)
+
+    # -----------------------------------------------------------------------
+    # 16. Modify a file under common prefix → remote update preserves path
+    # -----------------------------------------------------------------------
+    def test_16_common_prefix_modify_push(self):
+        """Modify a file under a shared prefix, verify the push preserves
+        full paths on the server (regression for zip wrapper)."""
+        repo_name = f"{AGENT_PREFIX}-prefix-mod"
+        files = {
+            "skills/lint/SKILL.md": "# Lint\nVersion 1.\n",
+            "skills/format/SKILL.md": "# Format\nVersion 1.\n",
+        }
+        local_dir = self._create_local(files)
+        proc = None
+        try:
+            proc = self._start_watch("qoder", ALL_AGENT_NAME, local_dir, repo_name)
+            self._wait_cycles(2)
+
+            # Modify one file
+            (Path(local_dir) / "skills" / "lint" / "SKILL.md").write_text(
+                "# Lint\nVersion 2 - updated.\n", encoding="utf-8"
+            )
+
+            self._wait_cycles(2)
+
+            # Verify remote has updated content at the correct path
+            content = self.client.download_repo_file(
+                self.username, repo_name, "skills/lint/SKILL.md")
+            self.assertIn("Version 2", content)
+
+            # Other file untouched
+            content2 = self.client.download_repo_file(
+                self.username, repo_name, "skills/format/SKILL.md")
+            self.assertIn("Version 1", content2)
+        finally:
+            if proc:
+                self._stop_watch(proc)
+            self._cleanup(local_dir)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

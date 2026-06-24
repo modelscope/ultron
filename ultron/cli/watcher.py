@@ -74,18 +74,23 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
                 continue
 
         remote_max_date = max((f.committed_date for f in remote_files), default=0)
-        remote_sha_map = {f.path: f.sha256 for f in remote_files}
 
-        # ---- Step 2: Detect remote changes ----
-        # Two signals: (a) timestamp advanced, or (b) file set changed (covers
-        # pure deletions where no remaining file's committed_date advances).
+        # ---- Step 2: Collect local resources ----
+        local_resources = spec.collect()
+
+        # ---- Step 3: Scoped change detection ----
+        # Only track paths within the spec's scope (what collect() can produce).
+        # Server-generated files like README.md are excluded from sync logic.
+        scope = set(local_resources.keys()) | set(state.get("remote_files", {}).keys())
+        remote_sha_map = {f.path: f.sha256 for f in remote_files if f.path in scope}
+
+        # Remote changed: (a) timestamp advanced, or (b) managed file set changed.
         remote_changed = (
             (remote_max_date > state["last_commit_date"])
             or (set(remote_sha_map.keys()) != set(state.get("remote_files", {}).keys()))
         )
 
-        # ---- Step 3: Collect local and detect local changes ----
-        local_resources = spec.collect()
+        # Local changed: compare against scoped baseline.
         local_changes = detect_local_changes(local_resources, state["remote_files"])
         local_changed = bool(local_changes)
 
@@ -133,7 +138,9 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
                     break
             if fresh is not None:
                 fresh_max = max((f.committed_date for f in fresh), default=0)
-                fresh_sha = {f.path: f.sha256 for f in fresh}
+                # Re-collect to determine current managed scope (post-sync).
+                managed = set(spec.collect().keys())
+                fresh_sha = {f.path: f.sha256 for f in fresh if f.path in managed}
                 state["last_commit_date"] = fresh_max
                 state["remote_files"] = fresh_sha
             else:

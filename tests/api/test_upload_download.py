@@ -34,7 +34,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from ultron.cli.client import ApiError, UltronClient
-from ultron.cli.commands import cmd_download, cmd_upload
+from ultron.cli.commands import cmd_download, cmd_upload, _repo_name
 from ultron.cli import config as cli_config
 from ultron.services.harness.allowlist import (
     ALL_AGENT_NAME,
@@ -477,7 +477,6 @@ class TestUploadDownload(unittest.TestCase):
     # -----------------------------------------------------------------------
     def test_17_roundtrip_all_qoder(self):
         """Upload qoder all → download → verify multiple agents collected."""
-        # all mode requires name="all" (serves as both agent_name and repo name)
         local_up = self._create_local_workspace(QODER_ALL_FILES)
         try:
             args = self._upload_args("qoder", ALL_AGENT_NAME, local_dir=local_up)
@@ -488,7 +487,8 @@ class TestUploadDownload(unittest.TestCase):
 
         _wait(5)
 
-        server_files = self.client.list_repo_files(self.username, ALL_AGENT_NAME)
+        repo = _repo_name("qoder", ALL_AGENT_NAME)
+        server_files = self.client.list_repo_files(self.username, repo)
         server_set = set(server_files)
         # Both agents/reviewer.md and agents/coder.md should be uploaded
         self.assertIn("agents/reviewer.md", server_set)
@@ -510,7 +510,8 @@ class TestUploadDownload(unittest.TestCase):
 
         _wait(5)
 
-        server_files = self.client.list_repo_files(self.username, ALL_AGENT_NAME)
+        repo = _repo_name("qwenpaw", ALL_AGENT_NAME)
+        server_files = self.client.list_repo_files(self.username, repo)
         server_set = set(server_files)
         # Files should be prefixed with bot-a/ and bot-b/
         self.assertIn("bot-a/SOUL.md", server_set)
@@ -532,7 +533,8 @@ class TestUploadDownload(unittest.TestCase):
 
         _wait(5)
 
-        server_files = self.client.list_repo_files(self.username, ALL_AGENT_NAME)
+        repo = _repo_name("openclaw", ALL_AGENT_NAME)
+        server_files = self.client.list_repo_files(self.username, repo)
         server_set = set(server_files)
         self.assertIn("workspace/SOUL.md", server_set)
         self.assertIn("workspace-helper/SOUL.md", server_set)

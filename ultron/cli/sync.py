@@ -34,14 +34,19 @@ def _md5(content: str) -> str:
     return hashlib.md5(content.encode("utf-8")).hexdigest()
 
 
-def zip_resources(resources: Dict[str, str]) -> bytes:
+def zip_resources(resources: Dict[str, str], wrapper: str = "agent") -> bytes:
     """Pack resources into a deterministic in-memory zip.
+
+    The server always strips the first directory level from zip entries, so we
+    wrap all files under a top-level folder (``wrapper/``). This ensures that
+    after stripping, the remaining path matches the original ``rel_path``.
 
     Args:
         resources: A dict {rel_path: content_or_filepath}. If a value is a
                    short string that points to an existing file on disk, its
                    content is read; otherwise the value is treated as literal
                    text content.
+        wrapper: Name of the top-level wrapper directory (default: "agent").
     """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -56,7 +61,7 @@ def zip_resources(resources: Dict[str, str]) -> bytes:
                         content = p.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     pass
-            zf.writestr(rel, content)
+            zf.writestr(f"{wrapper}/{rel}", content)
     return buf.getvalue()
 
 
