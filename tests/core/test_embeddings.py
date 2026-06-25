@@ -6,6 +6,13 @@ from unittest.mock import MagicMock, patch
 
 from ultron.core.embeddings import HAS_DASHSCOPE, EmbeddingService
 
+try:
+    import openai  # noqa: F401
+
+    HAS_OPENAI = True
+except ImportError:
+    HAS_OPENAI = False
+
 
 class TestCosineSimilarity(unittest.TestCase):
     """Cosine similarity helper without DashScope."""
@@ -107,6 +114,120 @@ class TestDashScopeIntegration(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as ctx:
                     svc.embed_text("x")
                 self.assertIn("quota", str(ctx.exception))
+
+
+class TestOpenAIBackendConfig(unittest.TestCase):
+    """OpenAI-compatible backend constructor validation."""
+
+    def test_unsupported_backend_raises(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            EmbeddingService(backend="zhipu")
+        self.assertIn("unsupported embedding backend", str(ctx.exception))
+
+    @unittest.skipUnless(HAS_OPENAI, "openai not installed")
+    def test_missing_base_url_raises(self):
+        with patch("openai.OpenAI"):
+            with self.assertRaises(RuntimeError) as ctx:
+                EmbeddingService(backend="openai", api_key="k", base_url="")
+            self.assertIn("base_url", str(ctx.exception))
+
+    @unittest.skipUnless(HAS_OPENAI, "openai not installed")
+    def test_missing_api_key_raises(self):
+        with patch("openai.OpenAI"):
+            with self.assertRaises(RuntimeError) as ctx:
+                EmbeddingService(
+                    backend="openai", api_key="", base_url="https://api.example/v1"
+                )
+            self.assertIn("api key", str(ctx.exception))
+
+
+class TestOpenAIBackendIntegration(unittest.TestCase):
+    """EmbeddingService 'openai' backend with a mocked OpenAI client."""
+
+    class _Item:
+        def __init__(self, embedding):
+            self.embedding = embedding
+
+    class _Resp:
+        def __init__(self, vectors):
+            self.data = [TestOpenAIBackendIntegration._Item(v) for v in vectors]
+
+    def _build(self, *, dimension_hint=1024):
+        """Return (service, mock_client) with OpenAI patched out."""
+        mock_client = MagicMock()
+        patcher = patch("openai.OpenAI", return_value=mock_client)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        svc = EmbeddingService(
+            backend="openai",
+            model_name="embedding-3",
+            base_url="https://api.example/v1",
+            api_key="test-key",
+            embedding_dimension_hint=dimension_hint,
+        )
+        return svc, mock_client
+
+    @unittest.skipUnless(HAS_OPENAI, "openai not installed")
+    def test_embed_text_updates_dimension(self):
+        vec = [0.1, 0.2, 0.3]
+        svc, client = self._build(dimension_hint=8)
+        client.embeddings.create.return_value = self._Resp([vec])
+        out = svc.embed_text("hello")
+        self.assertEqual(out, vec)
+        self.assertEqual(svc.dimension, 3)
+        self.assertTrue(svc.is_available())
+        client.embeddings.create.assert_called_once_with(
+            model="embedding-3", input=["hello"]
+        )
+
+    @unittest.skipUnless(HAS_OPENAI, "openai not installed")
+    def test_embed_texts_batch(self):
+        vectors = [[1.0, 0.0], [0.0, 1.0]]
+        svc, client = self._build()
+        client.embeddings.create.return_value = self._Resp(vectors)
+        out = svc.embed_texts(["a", "b"])
+        self.assertEqual(out, vectors)
+        self.assertEqual(svc.dimension, 2)
+
+    @unittest.skipUnless(HAS_OPENAI, "openai not installed")
+    def test_call_failure_raises(self):
+        svc, client = self._build()
+        client.embeddings.create.side_effect = RuntimeError("boom")
+        with self.assertRaises(RuntimeError) as ctx:
+            svc.embed_text("x")
+        self.assertIn("OpenAI-compatible embedding call failed", str(ctx.exception))
+
+    @unittest.skipUnless(HAS_OPENAI, "openai not installed")
+    def test_empty_data_raises(self):
+        svc, client = self._build()
+        client.embeddings.create.return_value = self._Resp([])
+        with self.assertRaises(RuntimeError) as ctx:
+            svc.embed_text("x")
+        self.assertIn("no data", str(ctx.exception))
+
+    @unittest.skipUnless(HAS_OPENAI, "openai not installed")
+    def test_empty_row_raises(self):
+        svc, client = self._build()
+        client.embeddings.create.return_value = self._Resp([[]])
+        with self.assertRaises(RuntimeError) as ctx:
+            svc.embed_text("x")
+        self.assertIn("empty row", str(ctx.exception))
+
+    @unittest.skipUnless(HAS_OPENAI, "openai not installed")
+    def test_count_mismatch_raises(self):
+        svc, client = self._build()
+        client.embeddings.create.return_value = self._Resp([[1.0, 2.0]])
+        with self.assertRaises(RuntimeError) as ctx:
+            svc.embed_texts(["a", "b"])
+        self.assertIn("count mismatch", str(ctx.exception))
+
+    @unittest.skipUnless(HAS_OPENAI, "openai not installed")
+    def test_model_info_reports_backend(self):
+        svc, _ = self._build()
+        info = svc.get_model_info()
+        self.assertEqual(info["backend"], "openai")
+        self.assertEqual(info["base_url"], "https://api.example/v1")
+        self.assertEqual(info["model_name"], "embedding-3")
 
 
 if __name__ == "__main__":

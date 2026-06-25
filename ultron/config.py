@@ -71,6 +71,21 @@ class UltronConfig:
             os.environ.get("ULTRON_EMBEDDING_DIMENSION", "1024")
         )
     )
+    # OpenAI-compatible embedding backend (Zhipu/GLM, OpenAI, vLLM/TEI, ...).
+    # Used only when embedding_backend == "openai"; falls back to LLM endpoint/key.
+    embedding_base_url: str = field(
+        default_factory=lambda: (
+            os.environ.get("ULTRON_EMBEDDING_BASE_URL", "").strip()
+            or os.environ.get("ULTRON_BASE_URL", "").strip()
+        )
+    )
+    embedding_api_key: str = field(
+        default_factory=lambda: (
+            os.environ.get("ULTRON_EMBEDDING_API_KEY", "").strip()
+            or os.environ.get("ULTRON_API_KEY", "").strip()
+            or os.environ.get("OPENAI_API_KEY", "").strip()
+        )
+    )
 
     # Conversation extract: extra lines before ``new_lines`` for LLM context (no extra progress advance)
     session_extract_overlap_lines: int = field(

@@ -40,7 +40,7 @@ Ultron primarily calls LLM APIs, so a CPU-only machine is enough.
 
 ## Environment variables
 
-Smart ingestion and LLM-based classification need OpenAI-compatible LLM config. **Recommended**: set `ULTRON_LLM_PROVIDER`, `ULTRON_MODEL`, `ULTRON_BASE_URL`, and `ULTRON_API_KEY` in `~/.ultron/.env`. Embeddings still rely on `DASHSCOPE_API_KEY`.
+Smart ingestion and LLM-based classification need OpenAI-compatible LLM config. **Recommended**: set `ULTRON_LLM_PROVIDER`, `ULTRON_MODEL`, `ULTRON_BASE_URL`, and `ULTRON_API_KEY` in `~/.ultron/.env`. Embeddings default to `DASHSCOPE_API_KEY`; to use another model, set `ULTRON_EMBEDDING_BACKEND` to `local` (local sentence-transformers) or `openai` (any OpenAI-compatible `/embeddings` endpoint such as Zhipu `embedding-3`, OpenAI, vLLM/TEI, configured via `ULTRON_EMBEDDING_BASE_URL`/`ULTRON_EMBEDDING_API_KEY`).
 
 You can also export in the shell for one-off debugging:
 
@@ -60,8 +60,10 @@ Other optional variables (full `ULTRON_*` list in [Configuration](../Components/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ULTRON_EMBEDDING_MODEL` | TextEmbedding model name | `text-embedding-v4` |
-| `ULTRON_EMBEDDING_BACKEND` | Embedding backend (`dashscope` or `local`) | `dashscope` |
+| `ULTRON_EMBEDDING_BACKEND` | Embedding backend (`dashscope`, `openai`, or `local`) | `dashscope` |
 | `ULTRON_EMBEDDING_DIMENSION` | Vector dimension | `1024` |
+| `ULTRON_EMBEDDING_BASE_URL` | `openai` backend OpenAI-compatible `/embeddings` root URL (falls back to `ULTRON_BASE_URL`) | `""` |
+| `ULTRON_EMBEDDING_API_KEY` | `openai` backend API key (falls back to `ULTRON_API_KEY` / `OPENAI_API_KEY`) | `""` |
 | `ULTRON_LLM_PROVIDER` | OpenAI-compatible provider selector | `dashscope` |
 | `ULTRON_MODEL` | LLM for smart ingestion and extraction | `qwen3.6-flash` |
 | `ULTRON_MEMORY_CATEGORY_MODEL` | LLM for memory type classification | `qwen3.6-flash` |
