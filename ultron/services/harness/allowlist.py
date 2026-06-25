@@ -145,7 +145,7 @@ class ClawWorkspaceAllowlist(ABC):
                 if f.is_symlink():
                     continue
                 try:
-                    rel = str(f.relative_to(root))
+                    rel = f.relative_to(root).as_posix()
                 except ValueError:
                     continue
                 if not self._matches(rel, patterns):

@@ -455,13 +455,17 @@ def cmd_recover(args) -> int:
                 deleted += 1
 
     # ---- Step 4: Extract zip (overwrite matched files) ----
-    print(f"Restoring {zip_path.name} -> {root}")
+    resolved_root = root.resolve()
+    print(f"Restoring {zip_path.name} -> {resolved_root}")
     restored = 0
     with zipfile.ZipFile(zip_path, "r") as zf:
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            file_target = root / info.filename
+            file_target = (resolved_root / info.filename).resolve()
+            if not file_target.is_relative_to(resolved_root):
+                print(f"  Skipped (path traversal): {info.filename}")
+                continue
             file_target.parent.mkdir(parents=True, exist_ok=True)
             file_target.write_bytes(zf.read(info.filename))
             print(f"  Restored: {info.filename}")

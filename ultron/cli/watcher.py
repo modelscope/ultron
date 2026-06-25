@@ -153,10 +153,19 @@ def _refresh_baseline(client, username: str, name: str, spec, state: dict, logge
 
 
 def daemonize(target, *args, **kwargs):
-    """Double-fork to daemonize *target* on Unix.
+    """Launch *target* as a background process.
 
-    Writes the daemon PID to the pid file so ``ultron stop`` can find it.
+    Unix: classic double-fork.
+    Windows: subprocess.Popen with DETACHED_PROCESS.
     """
+    if hasattr(os, "fork"):
+        _daemonize_unix(target, *args, **kwargs)
+    else:
+        _daemonize_windows(target, *args, **kwargs)
+
+
+def _daemonize_unix(target, *args, **kwargs):
+    """Double-fork daemon (Unix only)."""
     pf = pid_file()
 
     pid = os.fork()
@@ -188,6 +197,45 @@ def daemonize(target, *args, **kwargs):
         os._exit(0)
 
 
+def _daemonize_windows(target, *args, **kwargs):
+    """Spawn a detached background process (Windows).
+
+    Re-launches Python with ``ultron _watch_daemon`` internal command,
+    passing serialized arguments via a temp JSON file.
+    """
+    import json
+    import tempfile
+
+    # Serialize the arguments that watch_loop needs.
+    payload = {
+        "username": args[2] if len(args) > 2 else kwargs.get("username", ""),
+        "name": args[3] if len(args) > 3 else kwargs.get("name", ""),
+        "framework": args[4] if len(args) > 4 else kwargs.get("framework", ""),
+        "interval": args[5] if len(args) > 5 else kwargs.get("interval", 60),
+        "push_only": kwargs.get("push_only", True),
+        # spec and client are rebuilt in the child from stored config.
+    }
+    # Write to a temp file that the child will read and delete.
+    fd, param_path = tempfile.mkstemp(suffix=".json", prefix="ultron_watch_")
+    with os.fdopen(fd, "w") as f:
+        json.dump(payload, f)
+
+    # Launch detached subprocess.
+    CREATE_NO_WINDOW = 0x08000000
+    DETACHED_PROCESS = 0x00000008
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "ultron.cli", "_watch_daemon", param_path],
+        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+        close_fds=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+    )
+    # Write PID file.
+    pf = pid_file()
+    pf.write_text(str(proc.pid), encoding="utf-8")
+
+
 def stop_daemon() -> bool:
     """Stop ALL running watch daemon processes.
 
@@ -208,16 +256,17 @@ def stop_daemon() -> bool:
             tracked_pid = None
         pf.unlink(missing_ok=True)
 
-    # 2. Kill orphaned watch processes.
-    my_pid = os.getpid()
-    for found_pid in _find_watch_pids():
-        if found_pid in (my_pid, tracked_pid):
-            continue
-        try:
-            os.kill(found_pid, signal.SIGTERM)
-            stopped = True
-        except (ProcessLookupError, PermissionError):
-            pass
+    # 2. Kill orphaned watch processes (Unix only; pgrep unavailable on Windows).
+    if hasattr(os, "fork"):
+        my_pid = os.getpid()
+        for found_pid in _find_watch_pids():
+            if found_pid in (my_pid, tracked_pid):
+                continue
+            try:
+                os.kill(found_pid, signal.SIGTERM)
+                stopped = True
+            except (ProcessLookupError, PermissionError):
+                pass
 
     # 3. Wait for processes to exit (up to 3s).
     if stopped:

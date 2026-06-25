@@ -172,9 +172,63 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # Internal entry: Windows daemon subprocess.
+    args_list = argv if argv is not None else sys.argv[1:]
+    if args_list and args_list[0] == "_watch_daemon":
+        return _run_watch_daemon(args_list[1] if len(args_list) > 1 else "")
+
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
+
+
+def _run_watch_daemon(param_path: str) -> int:
+    """Internal: Windows detached process entry for watch loop."""
+    import json
+    from pathlib import Path
+
+    from .cache import pid_file, log_file
+    from .client import UltronClient
+    from .commands import _build_allowlist, _repo_name, ALL_AGENT_NAME
+    from .config import resolve_server, resolve_token, resolve_username
+    from .watcher import watch_loop
+
+    ppath = Path(param_path)
+    if not ppath.exists():
+        return 1
+    payload = json.loads(ppath.read_text(encoding="utf-8"))
+    ppath.unlink(missing_ok=True)
+
+    username = payload.get("username") or resolve_username()
+    name = payload.get("name") or ALL_AGENT_NAME
+    framework = payload.get("framework", "")
+    interval = payload.get("interval", 60)
+    push_only = payload.get("push_only", True)
+
+    server = resolve_server(None)
+    token = resolve_token(None)
+    if not server or not token or not username:
+        return 1
+
+    spec = _build_allowlist(framework, name, None)
+    client = UltronClient(server, token)
+    repo = _repo_name(framework, name)
+
+    # Redirect stdout/stderr to log file.
+    import os
+    lf = log_file()
+    lf.parent.mkdir(parents=True, exist_ok=True)
+    log_fd = os.open(str(lf), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    os.dup2(log_fd, 1)
+    os.dup2(log_fd, 2)
+    os.close(log_fd)
+
+    pf = pid_file()
+    try:
+        watch_loop(spec, client, username, repo, framework, interval, push_only=push_only)
+    finally:
+        pf.unlink(missing_ok=True)
+    return 0
 
 
 if __name__ == "__main__":

@@ -34,17 +34,7 @@ def zip_resources(resources: Dict[str, str], wrapper: str = "agent") -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel, value in sorted(resources.items()):
-            content = value
-            # Only attempt path resolution for short values that have no
-            # newlines (newlines are a strong signal of literal content).
-            if isinstance(value, str) and len(value) < 4096 and "\n" not in value:
-                try:
-                    p = Path(value)
-                    if p.is_file():
-                        content = p.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    pass
-            zf.writestr(f"{wrapper}/{rel}", content)
+            zf.writestr(f"{wrapper}/{rel}", value)
     return buf.getvalue()
 
 
