@@ -7,7 +7,6 @@ Cache layout (under ``~/.ultron/cache/``):
 
     cache/
     ├── {name}_{timestamp}.zip   # local backups
-    ├── cloud/{name}/            # downloaded cloud copies
     ├── sync_{name}.json         # bidirectional sync baseline
     ├── logs/watch.log           # runtime logs
     └── watch.pid                # background process PID
@@ -26,13 +25,6 @@ def _ultron_home() -> Path:
 def cache_dir() -> Path:
     """Root cache directory: ``~/.ultron/cache/``."""
     d = _ultron_home() / "cache"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def cloud_dir(name: str) -> Path:
-    """Cloud download directory for a given agent: ``~/.ultron/cache/cloud/{name}/``."""
-    d = cache_dir() / "cloud" / name
     d.mkdir(parents=True, exist_ok=True)
     return d
 

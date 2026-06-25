@@ -104,37 +104,9 @@ class UltronClient:
             raise _wrap(exc) from exc
 
     def list_repo_files(self, path: str, name: str, revision: str = 'master') -> List[str]:
-        """All file paths in the repo, recursing into sub-directories.
-
-        The server returns ``{"commit": {...}, "trees": [...]}`` where each
-        entry has ``type`` ("tree" for dirs, "blob" for files) and ``path``.
-        """
-        all_files: List[str] = []
-        try:
-            data = self._openapi._request(
-                "GET", f"/agents/{path}/{name}/repo/files",
-                params={
-                    "recursive": "true",
-                    "page_size": "100",
-                    "page_number": "1",
-                    "revision": revision,
-                },
-            )
-            trees = []
-            if isinstance(data, dict):
-                trees = data.get("trees") or data.get("Trees") or []
-            elif isinstance(data, list):
-                trees = data
-            for item in trees:
-                if not isinstance(item, dict):
-                    continue
-                item_path = item.get("path") or item.get("Path") or ""
-                item_type = item.get("type") or item.get("Type") or ""
-                if item_type == "blob" and item_path:
-                    all_files.append(item_path)
-        except HubError as exc:
-            raise _wrap(exc) from exc
-        return all_files
+        """All file paths in the repo, recursing into sub-directories."""
+        entries = self._fetch_tree_entries(path, name, revision)
+        return [e["path"] for e in entries if e["type"] == "blob" and e["path"]]
 
     def list_repo_files_detail(self, path: str, name: str, revision: str = 'master') -> List[RemoteFileInfo]:
         """All blob files with sha256 and committed_date.
@@ -142,7 +114,20 @@ class UltronClient:
         Returns a list of ``RemoteFileInfo`` for each blob entry in the repo.
         Raises ``ApiError(404, ...)`` if the repo does not exist.
         """
+        entries = self._fetch_tree_entries(path, name, revision)
         results: List[RemoteFileInfo] = []
+        for item in entries:
+            if item["type"] != "blob" or not item["path"]:
+                continue
+            results.append(RemoteFileInfo(
+                path=item["path"],
+                sha256=item.get("sha256") or "",
+                committed_date=int(item.get("committed_date") or 0),
+            ))
+        return results
+
+    def _fetch_tree_entries(self, path: str, name: str, revision: str) -> List[dict]:
+        """Fetch and normalize the repo file tree from the API."""
         try:
             data = self._openapi._request(
                 "GET", f"/agents/{path}/{name}/repo/files",
@@ -153,27 +138,26 @@ class UltronClient:
                     "revision": revision,
                 },
             )
-            trees = []
-            if isinstance(data, dict):
-                trees = data.get("trees") or data.get("Trees") or []
-            elif isinstance(data, list):
-                trees = data
-            for item in trees:
-                if not isinstance(item, dict):
-                    continue
-                item_type = item.get("type") or item.get("Type") or ""
-                if item_type != "blob":
-                    continue
-                item_path = item.get("path") or item.get("Path") or ""
-                item_sha = item.get("sha256") or item.get("Sha256") or ""
-                item_date = item.get("committed_date") or item.get("Committed_date") or 0
-                if item_path:
-                    results.append(RemoteFileInfo(
-                        path=item_path, sha256=item_sha, committed_date=int(item_date),
-                    ))
         except HubError as exc:
             raise _wrap(exc) from exc
-        return results
+
+        raw = []
+        if isinstance(data, dict):
+            raw = data.get("trees") or data.get("Trees") or []
+        elif isinstance(data, list):
+            raw = data
+
+        entries: List[dict] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            entries.append({
+                "path": item.get("path") or item.get("Path") or "",
+                "type": item.get("type") or item.get("Type") or "",
+                "sha256": item.get("sha256") or item.get("Sha256") or "",
+                "committed_date": item.get("committed_date") or item.get("Committed_date") or 0,
+            })
+        return entries
 
     def download_repo_file(self, path: str, name: str, file_path: str,
                            revision: str = "master") -> str:

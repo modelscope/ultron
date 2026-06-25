@@ -274,15 +274,11 @@ def cmd_watch(args) -> int:
     if not username:
         return _fail("missing username; run 'ultron login' again.")
 
-    # Kill any stale watch processes before starting a new one.
+    # Ensure no stale watch processes are running.
     pf = pid_file()
     if pf.exists():
         from .watcher import stop_daemon
         stop_daemon()
-        import time
-        time.sleep(1)  # Give processes time to exit.
-        if pf.exists():
-            pf.unlink(missing_ok=True)
 
     spec = _build_allowlist(framework, name, args.local_dir)
     client = UltronClient(server, token)

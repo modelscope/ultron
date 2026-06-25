@@ -3,11 +3,11 @@
 import logging
 import os
 import signal
+import subprocess
 import sys
 import time
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
-from typing import Dict, Optional
+from typing import List, Optional
 
 from .cache import load_sync_state, log_file, pid_file, save_sync_state
 from .client import ApiError
@@ -27,7 +27,6 @@ def _get_logger() -> logging.Logger:
         return _logger
     _logger = logging.getLogger("ultron.watch")
     _logger.setLevel(logging.INFO)
-    # File handler (rotated at 5 MB, keep 3 backups).
     fh = RotatingFileHandler(
         str(log_file()), maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
@@ -39,20 +38,14 @@ def _get_logger() -> logging.Logger:
 def watch_loop(spec, client, username: str, name: str, framework: str, interval: int = 60, *, push_only: bool = True):
     """Sync loop: push local changes, optionally pull remote changes.
 
-    When push_only=True (default), only local changes are pushed to remote.
-    Remote changes are never pulled, protecting local files from accidental deletion.
-
-    When push_only=False, full bidirectional sync is enabled (pull remote changes too).
-
-    Runs indefinitely until SIGTERM/SIGINT is received.
+    push_only=True (default): only pushes, never modifies local files.
+    push_only=False: full bidirectional sync (remote wins on conflict).
     """
     logger = _get_logger()
-    root: Path = spec.workspace_root
-    logger.info("Watch started for %s/%s (root=%s, interval=%ds, push_only=%s)", username, name, root, interval, push_only)
+    logger.info("Watch started for %s/%s (root=%s, interval=%ds, push_only=%s)",
+                username, name, spec.workspace_root, interval, push_only)
 
-    # Load sync baseline from cache.
     state = load_sync_state(name)
-
     running = True
 
     def _handle_term(signum, frame):
@@ -67,169 +60,126 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
         if not running:
             break
 
-        # ---- Step 1: Fetch remote file list ----
+        # ---- Fetch remote file list ----
         try:
             remote_files = client.list_repo_files_detail(username, name)
         except ApiError as e:
             if e.status in (404, 500):
-                # 404 = repo doesn't exist yet; 500 = newly created repo not ready.
                 remote_files = []
             else:
                 logger.error("Failed to list remote files: %s", e)
                 continue
 
-        remote_max_date = max((f.committed_date for f in remote_files), default=0)
-
-        # ---- Step 2: Collect local resources ----
+        # ---- Collect local resources & detect changes ----
         local_resources = spec.collect()
-
-        # ---- Step 3: Scoped change detection ----
-        # Only track paths within the spec's scope (what collect() can produce).
-        # Server-generated files like README.md are excluded from sync logic.
         scope = set(local_resources.keys()) | set(state.get("remote_files", {}).keys())
         remote_sha_map = {f.path: f.sha256 for f in remote_files if f.path in scope}
 
-        # Remote changed: (a) timestamp advanced, or (b) managed file set changed.
         remote_changed = (
-            (remote_max_date > state["last_commit_date"])
-            or (set(remote_sha_map.keys()) != set(state.get("remote_files", {}).keys()))
+            max((f.committed_date for f in remote_files), default=0) > state["last_commit_date"]
+            or set(remote_sha_map.keys()) != set(state.get("remote_files", {}).keys())
         )
+        local_changed = bool(detect_local_changes(local_resources, state["remote_files"]))
 
-        # Local changed: compare against scoped baseline.
-        local_changes = detect_local_changes(local_resources, state["remote_files"])
-        local_changed = bool(local_changes)
-
-        # ---- Step 4: Four-quadrant decision ----
+        # ---- Sync decision ----
+        did_sync = False
         try:
-            if push_only:
-                # Push-only mode: never pull, never delete local files.
-                if local_changed:
-                    push_resources(client, username, name, framework, local_resources)
-                    logger.info("Pushed local changes.")
-                else:
-                    # Nothing to do — skip baseline update.
-                    pass
-            elif remote_changed and local_changed:
-                # Conflict: remote wins, backup local first.
-                backup_path = backup_local(spec, name)
-                pull_incremental(client, username, name, spec, remote_files, local_resources)
-                logger.warning(
-                    "Conflict: remote and local both changed. "
-                    "Remote wins. Local backup: %s", backup_path,
-                )
-            elif remote_changed:
-                backup_path = backup_local(spec, name)
-                pull_incremental(client, username, name, spec, remote_files, local_resources)
-                logger.info("Pulled remote changes (backup: %s).", backup_path)
-            elif local_changed:
-                push_resources(client, username, name, framework, local_resources)
-                logger.info("Pushed local changes.")
-            else:
-                # No changes on either side — skip baseline update.
-                pass
+            did_sync = _sync_action(
+                push_only, remote_changed, local_changed,
+                client, username, name, framework, spec,
+                remote_files, local_resources, logger,
+            )
         except Exception as exc:
-            # Operation failed: do NOT update baseline; retry next cycle.
             logger.error("Sync failed (will retry): %s", exc)
-            remote_changed = False
-            local_changed = False
 
-        # ---- Step 5: Update baseline (only on success) ----
-        if push_only:
-            # In push-only mode, update baseline only when local push succeeded.
-            if local_changed:
-                fresh = None
-                for _attempt in range(3):
-                    try:
-                        fresh = client.list_repo_files_detail(username, name)
-                        break
-                    except ApiError as e:
-                        if e.status == 500 and _attempt < 2:
-                            time.sleep(3)
-                            continue
-                        logger.error("Failed to refresh baseline: %s", e)
-                        break
-                    except Exception as exc:
-                        logger.error("Failed to refresh baseline: %s", exc)
-                        break
-                if fresh is not None:
-                    fresh_max = max((f.committed_date for f in fresh), default=0)
-                    managed = set(spec.collect().keys())
-                    fresh_sha = {f.path: f.sha256 for f in fresh if f.path in managed}
-                    state["last_commit_date"] = fresh_max
-                    state["remote_files"] = fresh_sha
-                else:
-                    fresh_max = state["last_commit_date"]
-                    fresh_sha = state["remote_files"]
-                save_sync_state(name, fresh_max, fresh_sha)
-        elif remote_changed or local_changed:
-            fresh = None
-            for _attempt in range(3):
-                try:
-                    fresh = client.list_repo_files_detail(username, name)
-                    break
-                except ApiError as e:
-                    if e.status == 500 and _attempt < 2:
-                        time.sleep(3)
-                        continue
-                    logger.error("Failed to refresh baseline: %s", e)
-                    break
-                except Exception as exc:
-                    logger.error("Failed to refresh baseline: %s", exc)
-                    break
-            if fresh is not None:
-                fresh_max = max((f.committed_date for f in fresh), default=0)
-                # Re-collect to determine current managed scope (post-sync).
-                managed = set(spec.collect().keys())
-                fresh_sha = {f.path: f.sha256 for f in fresh if f.path in managed}
-                state["last_commit_date"] = fresh_max
-                state["remote_files"] = fresh_sha
-            else:
-                fresh_max = state["last_commit_date"]
-                fresh_sha = state["remote_files"]
-
-            save_sync_state(name, fresh_max, fresh_sha)
+        # ---- Update baseline on successful sync ----
+        if did_sync:
+            _refresh_baseline(client, username, name, spec, state, logger)
+            save_sync_state(name, state["last_commit_date"], state["remote_files"])
 
     logger.info("Watch stopped (signal received).")
-    # Cleanup PID file.
     pf = pid_file()
     if pf.exists():
         pf.unlink(missing_ok=True)
 
 
+def _sync_action(
+    push_only, remote_changed, local_changed,
+    client, username, name, framework, spec,
+    remote_files, local_resources, logger,
+) -> bool:
+    """Execute the appropriate sync action. Returns True if something changed."""
+    if push_only:
+        if not local_changed:
+            return False
+        push_resources(client, username, name, framework, local_resources)
+        logger.info("Pushed local changes.")
+        return True
+
+    if remote_changed and local_changed:
+        backup_path = backup_local(spec, name)
+        pull_incremental(client, username, name, spec, remote_files, local_resources)
+        logger.warning("Conflict: remote wins. Local backup: %s", backup_path)
+    elif remote_changed:
+        backup_path = backup_local(spec, name)
+        pull_incremental(client, username, name, spec, remote_files, local_resources)
+        logger.info("Pulled remote changes (backup: %s).", backup_path)
+    elif local_changed:
+        push_resources(client, username, name, framework, local_resources)
+        logger.info("Pushed local changes.")
+    else:
+        return False
+    return True
+
+
+def _refresh_baseline(client, username: str, name: str, spec, state: dict, logger) -> None:
+    """Re-fetch remote file list and update state in-place."""
+    for attempt in range(3):
+        try:
+            fresh = client.list_repo_files_detail(username, name)
+            managed = set(spec.collect().keys())
+            state["last_commit_date"] = max((f.committed_date for f in fresh), default=0)
+            state["remote_files"] = {f.path: f.sha256 for f in fresh if f.path in managed}
+            return
+        except ApiError as e:
+            if e.status == 500 and attempt < 2:
+                time.sleep(3)
+                continue
+            logger.error("Failed to refresh baseline: %s", e)
+            return
+        except Exception as exc:
+            logger.error("Failed to refresh baseline: %s", exc)
+            return
+
+
 def daemonize(target, *args, **kwargs):
     """Double-fork to daemonize *target* on Unix.
 
-    Writes the child PID to the pid file so ``ultron stop`` can find it.
+    Writes the daemon PID to the pid file so ``ultron stop`` can find it.
     """
     pf = pid_file()
 
-    # First fork.
     pid = os.fork()
     if pid > 0:
-        # Parent writes child PID after second fork.
-        return
+        return  # Parent returns immediately.
 
-    # Decouple from parent.
     os.setsid()
 
-    # Second fork.
     pid = os.fork()
     if pid > 0:
-        # First child writes grandchild PID and exits.
-        pf.write_text(str(pid), encoding="utf-8")
-        os._exit(0)
+        os._exit(0)  # First child exits; grandchild is the actual daemon.
 
-    # Grandchild: redirect stdio.
+    # Grandchild: write PID and redirect stdio.
+    pf.write_text(str(os.getpid()), encoding="utf-8")
+
     sys.stdout.flush()
     sys.stderr.flush()
-    devnull = open(os.devnull, "r")
-    log = open(str(log_file()), "a")
-    os.dup2(devnull.fileno(), sys.stdin.fileno())
-    os.dup2(log.fileno(), sys.stdout.fileno())
-    os.dup2(log.fileno(), sys.stderr.fileno())
-
-    # Write own PID (the actual daemon).
-    pf.write_text(str(os.getpid()), encoding="utf-8")
+    with open(os.devnull, "r") as devnull:
+        os.dup2(devnull.fileno(), sys.stdin.fileno())
+    log_fd = os.open(str(log_file()), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    os.dup2(log_fd, sys.stdout.fileno())
+    os.dup2(log_fd, sys.stderr.fileno())
+    os.close(log_fd)
 
     try:
         target(*args, **kwargs)
@@ -241,27 +191,27 @@ def daemonize(target, *args, **kwargs):
 def stop_daemon() -> bool:
     """Stop ALL running watch daemon processes.
 
-    First kills the PID-file-tracked process, then scans for any orphaned
-    ultron watch processes and kills them too.  Returns True if at least one
-    process was stopped.
+    Kills the PID-file-tracked process, then scans for orphaned processes.
+    Waits briefly for graceful shutdown before returning.
     """
     stopped = False
     pf = pid_file()
 
-    # 1. Kill the PID-file-tracked process.
+    # 1. Kill PID-file-tracked process.
+    tracked_pid = None
     if pf.exists():
         try:
-            pid = int(pf.read_text().strip())
-            os.kill(pid, signal.SIGTERM)
+            tracked_pid = int(pf.read_text().strip())
+            os.kill(tracked_pid, signal.SIGTERM)
             stopped = True
         except (ValueError, OSError, ProcessLookupError):
-            pass
+            tracked_pid = None
         pf.unlink(missing_ok=True)
 
-    # 2. Scan for orphaned watch processes and kill them.
+    # 2. Kill orphaned watch processes.
     my_pid = os.getpid()
     for found_pid in _find_watch_pids():
-        if found_pid == my_pid:
+        if found_pid in (my_pid, tracked_pid):
             continue
         try:
             os.kill(found_pid, signal.SIGTERM)
@@ -269,19 +219,22 @@ def stop_daemon() -> bool:
         except (ProcessLookupError, PermissionError):
             pass
 
+    # 3. Wait for processes to exit (up to 3s).
+    if stopped:
+        time.sleep(1)
+
     return stopped
 
 
-def _find_watch_pids() -> list:
-    """Find PIDs of all running 'ultron watch' processes via pgrep."""
-    import subprocess
+def _find_watch_pids() -> List[int]:
+    """Find PIDs of running 'ultron watch' daemon processes via pgrep."""
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "ultron watch"],
+            ["pgrep", "-f", "ultron watch --framework"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0:
-            return [int(p) for p in result.stdout.strip().split() if p.isdigit()]
+            return [int(p) for p in result.stdout.strip().split("\n") if p.strip().isdigit()]
     except (OSError, subprocess.TimeoutExpired, ValueError):
         pass
     return []
