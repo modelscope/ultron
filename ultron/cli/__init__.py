@@ -133,10 +133,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_watch.add_argument("--server", help="Server URL override.")
     p_watch.add_argument("--token", help="API token override.")
     p_watch.add_argument(
-        "--interval", type=int, default=60,
-        help="Sync poll interval in seconds (default: 60).",
-    )
-    p_watch.add_argument(
         "--pull", action="store_true", default=False,
         help="Enable pulling remote changes to local (bidirectional sync). "
              "Without this flag, only local changes are pushed (safe mode).",
@@ -202,7 +198,7 @@ def _run_watch_daemon(param_path: str) -> int:
     username = payload.get("username") or resolve_username()
     name = payload.get("name") or ALL_AGENT_NAME
     framework = payload.get("framework", "")
-    interval = payload.get("interval", 60)
+    interval = payload.get("interval", 120)
     push_only = payload.get("push_only", True)
 
     server = resolve_server(None)
