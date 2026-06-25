@@ -16,8 +16,21 @@ from .client import ApiError, UltronClient
 
 
 def _fail(message: str) -> int:
-    print(f"error: {message}", file=sys.stderr)
+    print(f"Error: {message}", file=sys.stderr)
     return 1
+
+
+def _api_error_message(e: ApiError, action: str = "request") -> str:
+    """Return a user-friendly message based on the HTTP status code."""
+    if e.status == 401:
+        return "authentication failed. Run 'ultron login' to refresh your token."
+    if e.status == 403:
+        return "permission denied. You do not have access to this resource."
+    if e.status == 404:
+        return "resource not found. Check the repository name and try again."
+    if e.status >= 500:
+        return "server encountered an issue. Please wait a moment and try again."
+    return f"{action} failed (HTTP {e.status}: {e.detail})"
 
 
 def _repo_name(framework: str, name: str) -> str:
@@ -141,12 +154,15 @@ def cmd_upload(args) -> int:
 
     repo = _repo_name(framework, args.name)
     # Step 1: upload files -> get file_id
-    file_id = client.upload_file(resources)
-    # Step 2: create/update agent with file_id
-    result = client.create_repo(
-        username, repo, framework,
-        system_prompt_files=file_id,
-    )
+    try:
+        file_id = client.upload_file(resources)
+        # Step 2: create/update agent with file_id
+        result = client.create_repo(
+            username, repo, framework,
+            system_prompt_files=file_id,
+        )
+    except ApiError as e:
+        return _fail(_api_error_message(e, "upload"))
 
     print(
         f"\nUploaded {len(resources)} file(s) to "
@@ -187,7 +203,7 @@ def cmd_download(args) -> int:
             p: client.download_repo_file(username, repo, p) for p in paths
         }
     except ApiError as e:
-        return _fail(f"download failed ({e.detail})")
+        return _fail(_api_error_message(e, "download"))
 
     # Optional format conversion (source framework -> target framework).
     target_fw = args.target or framework
@@ -303,7 +319,9 @@ def cmd_watch(args) -> int:
                     f"framework mismatch: local={framework}, remote={remote_fw}. "
                     f"Use 'ultron convert' or 'ultron download --target' for cross-framework sync."
                 )
-    except ApiError:
+    except ApiError as e:
+        if e.status in (403, 401):
+            return _fail(_api_error_message(e, "watch"))
         pass  # repo not found or unreachable — proceed, first push will create it
 
     interval = getattr(args, "interval", 60) or 60
