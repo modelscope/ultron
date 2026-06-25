@@ -239,21 +239,49 @@ def daemonize(target, *args, **kwargs):
 
 
 def stop_daemon() -> bool:
-    """Stop a running watch daemon by sending SIGTERM.
+    """Stop ALL running watch daemon processes.
 
-    Returns True if a process was stopped, False if none was running.
+    First kills the PID-file-tracked process, then scans for any orphaned
+    ultron watch processes and kills them too.  Returns True if at least one
+    process was stopped.
     """
+    stopped = False
     pf = pid_file()
-    if not pf.exists():
-        return False
-    try:
-        pid = int(pf.read_text().strip())
-    except (ValueError, OSError):
+
+    # 1. Kill the PID-file-tracked process.
+    if pf.exists():
+        try:
+            pid = int(pf.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            stopped = True
+        except (ValueError, OSError, ProcessLookupError):
+            pass
         pf.unlink(missing_ok=True)
-        return False
+
+    # 2. Scan for orphaned watch processes and kill them.
+    my_pid = os.getpid()
+    for found_pid in _find_watch_pids():
+        if found_pid == my_pid:
+            continue
+        try:
+            os.kill(found_pid, signal.SIGTERM)
+            stopped = True
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    return stopped
+
+
+def _find_watch_pids() -> list:
+    """Find PIDs of all running 'ultron watch' processes via pgrep."""
+    import subprocess
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
+        result = subprocess.run(
+            ["pgrep", "-f", "ultron watch"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            return [int(p) for p in result.stdout.strip().split() if p.isdigit()]
+    except (OSError, subprocess.TimeoutExpired, ValueError):
         pass
-    pf.unlink(missing_ok=True)
-    return True
+    return []

@@ -274,10 +274,15 @@ def cmd_watch(args) -> int:
     if not username:
         return _fail("missing username; run 'ultron login' again.")
 
-    # Check if already running.
+    # Kill any stale watch processes before starting a new one.
     pf = pid_file()
     if pf.exists():
-        return _fail(f"watch already running (PID file: {pf}). Run 'ultron stop' first.")
+        from .watcher import stop_daemon
+        stop_daemon()
+        import time
+        time.sleep(1)  # Give processes time to exit.
+        if pf.exists():
+            pf.unlink(missing_ok=True)
 
     spec = _build_allowlist(framework, name, args.local_dir)
     client = UltronClient(server, token)
@@ -306,11 +311,14 @@ def cmd_watch(args) -> int:
         pass  # repo not found or unreachable — proceed, first push will create it
 
     interval = getattr(args, "interval", 60) or 60
-    push_only = getattr(args, "push_only", True)
-    print(f"Starting bidirectional sync for {username}/{repo} (interval={interval}s)...")
+    push_only = not getattr(args, "pull", False)
+    print(f"Starting sync for {username}/{repo} (interval={interval}s)...")
     print(f"  Framework: {framework}")
     print(f"  Root: {spec.workspace_root}")
-    print(f"  Push-only: {push_only}")
+    if push_only:
+        print(f"  Mode: push-only (local → remote, will NOT pull remote changes)")
+    else:
+        print(f"  Mode: bidirectional (local ↔ remote, WILL pull remote changes to local)")
     print(f"  Logs: {pid_file().parent / 'logs' / 'watch.log'}")
     print(f"  Stop: ultron stop")
 
