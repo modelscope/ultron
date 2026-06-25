@@ -20,24 +20,24 @@ class _StubClient:
         self.server = server
         self.token = token
         self.created = []
-        self.uploads = []
-        self.exists = False
+        self.uploaded_zip = None
         _StubClient.instances.append(self)
 
     def check_repo(self, path, name):
-        return self.exists
+        return False
 
-    def create_repo(self, path, name, framework):
-        self.created.append((path, name, framework))
+    def upload_file(self, resources):
+        """Accept either dict or bytes; return a fake file_id."""
+        if isinstance(resources, dict):
+            from ultron.cli.sync import zip_resources
+            self.uploaded_zip = zip_resources(resources)
+        else:
+            self.uploaded_zip = resources
+        return "fake-file-id"
+
+    def create_repo(self, path, name, framework, **kwargs):
+        self.created.append((path, name, framework, kwargs.get("system_prompt_files")))
         return {"success": True}
-
-    def upload_zip(self, path, name, framework, zip_bytes, message):
-        self.uploads.append(
-            {"path": path, "name": name, "framework": framework, "zip": zip_bytes}
-        )
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            files = zf.namelist()
-        return {"success": True, "data": {"Revision": 1, "files": len(files)}}
 
 
 def _run(argv):
@@ -95,13 +95,16 @@ class TestUploadCli(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(len(_StubClient.instances), 1)
         client = _StubClient.instances[0]
-        self.assertEqual(client.created, [("u", "reviewer", "qoder")])
-        self.assertEqual(len(client.uploads), 1)
-        upload = client.uploads[0]
-        self.assertEqual(upload["framework"], "qoder")
-        with zipfile.ZipFile(io.BytesIO(upload["zip"])) as zf:
-            paths = set(zf.namelist())
-        self.assertEqual(paths, {"agents/reviewer.md", "AGENTS.md"})
+        # create_repo called with (path, name, framework, system_prompt_files)
+        self.assertEqual(len(client.created), 1)
+        self.assertEqual(client.created[0][:3], ("u", "qoder-reviewer", "qoder"))
+        self.assertEqual(client.created[0][3], "fake-file-id")
+        # Verify zip content
+        self.assertIsNotNone(client.uploaded_zip)
+        with zipfile.ZipFile(io.BytesIO(client.uploaded_zip)) as zf:
+            paths = {p.removeprefix("agent/") for p in zf.namelist()}
+        self.assertIn("agents/reviewer.md", paths)
+        self.assertIn("AGENTS.md", paths)
 
     @mock.patch.object(commands.config, "resolve_server", return_value=None)
     @mock.patch.object(commands.config, "resolve_token", return_value=None)

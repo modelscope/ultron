@@ -41,15 +41,20 @@ def save(server: str, username: str, token: str) -> Path:
     return path
 
 
+DEFAULT_SERVER = "https://www.modelscope.cn"
+
+
 def resolve_server(override: Optional[str] = None) -> Optional[str]:
-    """Server URL precedence: explicit flag > ULTRON_SERVER env > stored config."""
+    """Server URL precedence: explicit flag > ULTRON_SERVER env > stored config > default."""
     if override:
         return override.rstrip("/")
     env = os.environ.get("ULTRON_SERVER", "").strip()
     if env:
         return env.rstrip("/")
     server = load().get("server")
-    return server.rstrip("/") if server else None
+    if server:
+        return server.rstrip("/")
+    return DEFAULT_SERVER
 
 
 def resolve_token(override: Optional[str] = None) -> Optional[str]:

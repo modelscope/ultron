@@ -48,7 +48,8 @@ class TestDownload(unittest.TestCase):
     @mock.patch.object(commands, "UltronClient", _DownloadStub)
     def test_download_writes_files(self, *_):
         rc = _run([
-            "download", "--name", "nano", "--local_dir", str(self.out),
+            "download", "--name", "nano", "--framework", "nanobot",
+            "--local_dir", str(self.out),
         ])
         self.assertEqual(rc, 0)
         self.assertEqual((self.out / "SOUL.md").read_text(), "soul")
@@ -61,8 +62,8 @@ class TestDownload(unittest.TestCase):
     def test_download_with_conversion(self, *_):
         # nanobot -> hermes: USER.md must land at hermes' memories/USER.md.
         rc = _run([
-            "download", "--name", "nano", "--target", "hermes",
-            "--local_dir", str(self.out),
+            "download", "--name", "nano", "--framework", "nanobot",
+            "--target", "hermes", "--local_dir", str(self.out),
         ])
         self.assertEqual(rc, 0)
         self.assertTrue((self.out / "memories" / "USER.md").is_file())
@@ -71,7 +72,8 @@ class TestDownload(unittest.TestCase):
     @mock.patch.object(commands.config, "resolve_server", return_value=None)
     @mock.patch.object(commands.config, "resolve_token", return_value=None)
     def test_download_without_login_fails(self, *_):
-        rc = _run(["download", "--name", "nano", "--local_dir", str(self.out)])
+        rc = _run(["download", "--name", "nano", "--framework", "nanobot",
+                   "--local_dir", str(self.out)])
         self.assertEqual(rc, 1)
 
 

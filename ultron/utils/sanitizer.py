@@ -2,10 +2,6 @@
 import re
 from typing import List, Optional, Tuple
 
-from presidio_analyzer import AnalyzerEngine
-from presidio_analyzer.nlp_engine import NlpEngineProvider
-from presidio_anonymizer import AnonymizerEngine
-
 
 class DataSanitizer:
     """
@@ -64,7 +60,9 @@ class DataSanitizer:
     }
 
     @staticmethod
-    def _spacy_analyzer(lang_code: str, model_name: str) -> AnalyzerEngine:
+    def _spacy_analyzer(lang_code: str, model_name: str) -> 'AnalyzerEngine':
+        from presidio_analyzer import AnalyzerEngine
+        from presidio_analyzer.nlp_engine import NlpEngineProvider
         # Use *_sm models only: Presidio's default AnalyzerEngine() loads en_core_web_lg (~400MB).
         return AnalyzerEngine(
             nlp_engine=NlpEngineProvider(
@@ -77,6 +75,7 @@ class DataSanitizer:
         )
 
     def __init__(self, custom_patterns: List[Tuple[str, str]] = None):
+        from presidio_anonymizer import AnonymizerEngine
         self.custom_patterns = custom_patterns or []
         self._en_analyzer = self._spacy_analyzer("en", "en_core_web_sm")
         self._zh_analyzer = self._spacy_analyzer("zh", "zh_core_web_sm")
