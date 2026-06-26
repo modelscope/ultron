@@ -236,10 +236,16 @@ def _daemonize_windows(target, *args, **kwargs):
     pf.write_text(str(proc.pid), encoding="utf-8")
 
 
-def stop_daemon() -> bool:
+_DEFAULT_WATCH_PATTERNS = [
+    "ultron watch --framework",
+]
+
+
+def stop_daemon(extra_patterns: "List[str] | None" = None) -> bool:
     """Stop ALL running watch daemon processes.
 
     Kills the PID-file-tracked process, then scans for orphaned processes.
+    *extra_patterns* allows callers to add custom pgrep patterns.
     Waits briefly for graceful shutdown before returning.
     """
     stopped = False
@@ -259,7 +265,7 @@ def stop_daemon() -> bool:
     # 2. Kill orphaned watch processes (Unix only; pgrep unavailable on Windows).
     if hasattr(os, "fork"):
         my_pid = os.getpid()
-        for found_pid in _find_watch_pids():
+        for found_pid in _find_watch_pids(extra_patterns):
             if found_pid in (my_pid, tracked_pid):
                 continue
             try:
@@ -275,15 +281,25 @@ def stop_daemon() -> bool:
     return stopped
 
 
-def _find_watch_pids() -> List[int]:
-    """Find PIDs of running 'ultron watch' daemon processes via pgrep."""
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", "ultron watch --framework"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            return [int(p) for p in result.stdout.strip().split("\n") if p.strip().isdigit()]
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        pass
-    return []
+def _find_watch_pids(extra_patterns: "List[str] | None" = None) -> List[int]:
+    """Find PIDs of running watch daemon processes via pgrep.
+
+    Searches default patterns plus any *extra_patterns* provided by the caller.
+    """
+    patterns = list(_DEFAULT_WATCH_PATTERNS)
+    if extra_patterns:
+        patterns.extend(extra_patterns)
+    pids: set = set()
+    for pattern in patterns:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", pattern],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                for p in result.stdout.strip().split("\n"):
+                    if p.strip().isdigit():
+                        pids.add(int(p.strip()))
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            pass
+    return list(pids)
