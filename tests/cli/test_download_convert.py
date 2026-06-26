@@ -48,7 +48,7 @@ class TestDownload(unittest.TestCase):
     @mock.patch.object(commands, "UltronClient", _DownloadStub)
     def test_download_writes_files(self, *_):
         rc = _run([
-            "download", "--name", "nano", "--framework", "nanobot",
+            "download", "--repo", "nano", "--framework", "nanobot",
             "--local_dir", str(self.out),
         ])
         self.assertEqual(rc, 0)
@@ -62,7 +62,7 @@ class TestDownload(unittest.TestCase):
     def test_download_with_conversion(self, *_):
         # nanobot -> hermes: USER.md must land at hermes' memories/USER.md.
         rc = _run([
-            "download", "--name", "nano", "--framework", "nanobot",
+            "download", "--repo", "nano", "--framework", "nanobot",
             "--target", "hermes", "--local_dir", str(self.out),
         ])
         self.assertEqual(rc, 0)
@@ -72,9 +72,69 @@ class TestDownload(unittest.TestCase):
     @mock.patch.object(commands.config, "resolve_server", return_value=None)
     @mock.patch.object(commands.config, "resolve_token", return_value=None)
     def test_download_without_login_fails(self, *_):
-        rc = _run(["download", "--name", "nano", "--framework", "nanobot",
+        rc = _run(["download", "--repo", "nano", "--framework", "nanobot",
                    "--local_dir", str(self.out)])
         self.assertEqual(rc, 1)
+
+    def test_download_repo_required(self):
+        """Download without --repo should fail at argparse level."""
+        import sys
+        from io import StringIO
+        stderr = StringIO()
+        with self.assertRaises(SystemExit):
+            _run(["download", "--framework", "nanobot", "--local_dir", str(self.out)])
+
+    @mock.patch.object(commands.config, "resolve_username", return_value="u")
+    @mock.patch.object(commands.config, "resolve_token", return_value="tok")
+    @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
+    @mock.patch.object(commands, "UltronClient", _DownloadStub)
+    def test_download_with_name_creates_agent(self, *_):
+        """Download with --name should write files for that local agent."""
+        rc = _run([
+            "download", "--repo", "nano", "--framework", "nanobot",
+            "--name", "myagent", "--local_dir", str(self.out),
+        ])
+        self.assertEqual(rc, 0)
+        # Files should still be written (nanobot shared files match).
+        self.assertTrue((self.out / "SOUL.md").is_file())
+
+    @mock.patch.object(commands.config, "resolve_username", return_value="u")
+    @mock.patch.object(commands.config, "resolve_token", return_value="tok")
+    @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
+    @mock.patch.object(commands, "UltronClient", _DownloadStub)
+    def test_download_filters_by_allowlist(self, *_):
+        """Files not matching the allowlist patterns should be skipped."""
+        # Add a file that won't match any pattern.
+        _DownloadStub.STORE = {
+            "SOUL.md": "soul",
+            "random/junk.txt": "junk",
+            "memory/MEMORY.md": "mem",
+        }
+        rc = _run([
+            "download", "--repo", "nano", "--framework", "nanobot",
+            "--local_dir", str(self.out),
+        ])
+        self.assertEqual(rc, 0)
+        # random/junk.txt should NOT be written.
+        self.assertFalse((self.out / "random" / "junk.txt").exists())
+        # Valid files should be written.
+        self.assertTrue((self.out / "SOUL.md").is_file())
+        # Restore original store.
+        _DownloadStub.STORE = {"SOUL.md": "soul", "USER.md": "user", "memory/MEMORY.md": "mem"}
+
+    @mock.patch.object(commands.config, "resolve_username", return_value="u")
+    @mock.patch.object(commands.config, "resolve_token", return_value="tok")
+    @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
+    @mock.patch.object(commands, "UltronClient", _DownloadStub)
+    def test_download_repo_with_slash(self, *_):
+        """--repo with '/' uses the specified group instead of username."""
+        rc = _run([
+            "download", "--repo", "othergroup/nano", "--framework", "nanobot",
+            "--local_dir", str(self.out),
+        ])
+        self.assertEqual(rc, 0)
+        # Should still write files (stub doesn't care about group).
+        self.assertTrue((self.out / "SOUL.md").is_file())
 
 
 class TestConvert(unittest.TestCase):

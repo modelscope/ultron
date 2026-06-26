@@ -40,6 +40,7 @@ MAX_FILE_SIZE = 1 * 1024 * 1024  # 1 MB
 
 DEFAULT_AGENT_NAME = "default"
 ALL_AGENT_NAME = "all"
+GLOBAL_AGENT_NAME = "__global__"
 
 
 class ClawWorkspaceAllowlist(ABC):
@@ -118,7 +119,14 @@ class ClawWorkspaceAllowlist(ABC):
         """Effective root: ``local_dir`` override, else the product default."""
         return self._local_dir if self._local_dir is not None else self.default_workspace_root
 
+    def _is_global(self) -> bool:
+        """Whether we are in global-only mode (shared files only, no sub-agent)."""
+        return self.agent_name == GLOBAL_AGENT_NAME
+
     def _resolved_patterns(self) -> List[str]:
+        if self._is_global():
+            # Global mode: exclude patterns containing {name} placeholder.
+            return [p for p in self._effective_patterns() if "{name}" not in p]
         name = "*" if self._is_all() else self.agent_name
         return [p.format(name=name) for p in self._effective_patterns()]
 
@@ -216,7 +224,10 @@ class NanobotWorkspaceAllowlist(ClawWorkspaceAllowlist):
         ]
 
     def list_agents(self) -> List[str]:
-        return _list_agent_files(self.workspace_root / "agents")
+        agents = _list_agent_files(self.workspace_root / "agents")
+        if DEFAULT_AGENT_NAME not in agents:
+            agents = [DEFAULT_AGENT_NAME] + agents
+        return agents
 
 
 class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
@@ -423,7 +434,10 @@ class QoderWorkspaceAllowlist(ClawWorkspaceAllowlist):
         ]
 
     def list_agents(self) -> List[str]:
-        return _list_agent_files(self.workspace_root / "agents")
+        agents = _list_agent_files(self.workspace_root / "agents")
+        if DEFAULT_AGENT_NAME not in agents:
+            agents = [DEFAULT_AGENT_NAME] + agents
+        return agents
 
 
 def _list_agent_files(agents_dir: Path) -> List[str]:

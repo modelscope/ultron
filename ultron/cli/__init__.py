@@ -10,7 +10,7 @@ Subcommands:
 import argparse
 import sys
 
-from .commands import cmd_convert, cmd_download, cmd_login, cmd_recover, cmd_stop, cmd_upload, cmd_watch
+from .commands import cmd_convert, cmd_download, cmd_list, cmd_login, cmd_recover, cmd_stop, cmd_upload, cmd_watch
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,7 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_up.add_argument(
         "--name", "-n",
-        help="Internal sub-agent name; also the repository name (agent_id).",
+        help="Local sub-agent name (auto-selects if only one exists).",
+    )
+    p_up.add_argument(
+        "--repo", "-r",
+        help="Remote repository name. Supports 'group/name' format. Defaults to local name.",
     )
     p_up.add_argument(
         "--local_dir", "-d",
@@ -46,10 +50,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_up.add_argument("--message", "-m", help="Commit message.")
     p_up.add_argument("--server", help="Server URL override.")
     p_up.add_argument("--token", help="API token override.")
-    p_up.add_argument(
-        "--list", action="store_true",
-        help="List sub-agents discovered on disk for the framework and exit.",
-    )
     p_up.add_argument(
         "--dry-run", action="store_true",
         help="Show the files that would be uploaded without uploading.",
@@ -62,12 +62,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Download a sub-agent's files from the agent repository to disk.",
     )
     p_dl.add_argument(
-        "--name", "-n", required=True,
-        help="Repository / sub-agent name to download.",
+        "--repo", "-r", required=True,
+        help="Remote repository name (required). Supports 'group/name' format.",
     )
     p_dl.add_argument(
         "--framework", "-f", required=True,
-        help="Source framework / bot type (used to derive the repo name).",
+        help="Source framework / bot type.",
+    )
+    p_dl.add_argument(
+        "--name", "-n",
+        help="Local sub-agent name to write as (default: 'default').",
     )
     p_dl.add_argument(
         "--target", "-t",
@@ -116,6 +120,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_cv.set_defaults(func=cmd_convert)
 
+    # ---- list ----
+    p_list = sub.add_parser(
+        "list",
+        help="List discoverable sub-agents for a framework.",
+    )
+    p_list.add_argument(
+        "--framework", "-f", required=True,
+        help="Agent framework / bot type.",
+    )
+    p_list.add_argument("--local_dir", "-d", help="Override workspace root.")
+    p_list.set_defaults(func=cmd_list)
+
     # ---- watch ----
     p_watch = sub.add_parser(
         "watch",
@@ -127,7 +143,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_watch.add_argument(
         "--name", "-n",
-        help="Sub-agent name (default: 'all' = full-scope sync).",
+        help="Local sub-agent name (default: global/shared files only).",
+    )
+    p_watch.add_argument(
+        "--repo", "-r",
+        help="Remote repository name. Supports 'group/name' format. Defaults to local name.",
     )
     p_watch.add_argument("--local_dir", "-d", help="Override workspace root.")
     p_watch.add_argument("--server", help="Server URL override.")

@@ -34,7 +34,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from ultron.cli.client import ApiError, UltronClient
-from ultron.cli.commands import cmd_download, cmd_upload, _repo_name
+from ultron.cli.commands import cmd_download, cmd_list, cmd_upload, _repo_name
 from ultron.cli import config as cli_config
 from ultron.services.harness.allowlist import (
     ALL_AGENT_NAME,
@@ -161,21 +161,22 @@ class TestUploadDownload(unittest.TestCase):
     # -----------------------------------------------------------------------
     # Helper: build args namespace for cmd_upload / cmd_download
     # -----------------------------------------------------------------------
-    def _upload_args(self, framework, name, local_dir=None, dry_run=False, list_=False):
+    def _upload_args(self, framework, name, local_dir=None, dry_run=False, repo=None):
         return SimpleNamespace(
             framework=framework,
             name=name,
+            repo=repo,
             local_dir=local_dir,
             server=SERVER,
             token=TOKEN,
             message=None,
-            list=list_,
             dry_run=dry_run,
         )
 
-    def _download_args(self, name, framework=None, target=None, local_dir=None, dry_run=False):
+    def _download_args(self, name, framework=None, target=None, local_dir=None, dry_run=False, repo=None):
         return SimpleNamespace(
             name=name,
+            repo=repo or _repo_name(framework or "", name or ""),
             framework=framework,
             target=target,
             local_dir=local_dir,
@@ -273,24 +274,24 @@ class TestUploadDownload(unittest.TestCase):
             self._cleanup_dir(local)
 
     # -----------------------------------------------------------------------
-    # 06. Upload: --list
+    # 06. List: list sub-agents
     # -----------------------------------------------------------------------
     def test_06_upload_list(self):
-        """--list should enumerate sub-agents on disk and return 0."""
+        """cmd_list should enumerate sub-agents on disk and return 0."""
         local = self._create_local_workspace(QODER_ALL_FILES)
         try:
-            args = self._upload_args("qoder", None, local_dir=local, list_=True)
-            rc = cmd_upload(args)
+            args = SimpleNamespace(framework="qoder", local_dir=local)
+            rc = cmd_list(args)
             self.assertEqual(rc, 0)
         finally:
             self._cleanup_dir(local)
 
     # -----------------------------------------------------------------------
-    # 07. Upload: missing --name → error
+    # 07. Upload: missing --name with multiple agents → error
     # -----------------------------------------------------------------------
     def test_07_upload_missing_name(self):
-        """Upload without --name (and not --list) should fail."""
-        local = self._create_local_workspace(QODER_INDIVIDUAL_FILES)
+        """Upload without --name when multiple agents exist should fail."""
+        local = self._create_local_workspace(QODER_ALL_FILES)
         try:
             args = self._upload_args("qoder", None, local_dir=local)
             rc = cmd_upload(args)

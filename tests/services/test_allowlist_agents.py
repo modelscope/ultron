@@ -52,7 +52,7 @@ class TestAgentAwareCollect(unittest.TestCase):
         (self.root / "agents" / "a.md").write_text("a")
         (self.root / "agents" / "b.md").write_text("b")
         spec = QoderWorkspaceAllowlist(local_dir=self.root)
-        self.assertEqual(spec.list_agents(), ["a", "b"])
+        self.assertEqual(spec.list_agents(), ["default", "a", "b"])
 
     def test_qwenpaw_default_root_uses_agent_name(self):
         # default_workspace_root must embed the agent name under workspaces/.

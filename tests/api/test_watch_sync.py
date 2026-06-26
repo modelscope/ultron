@@ -557,10 +557,12 @@ class TestWatchSync(unittest.TestCase):
         args = SimpleNamespace(
             framework="qoder",
             name="reviewer",
+            repo=None,
             local_dir=None,
             server=SERVER,
             token=TOKEN,
             interval=60,
+            pull=False,
             sessions_dir=None,
         )
         rc = cmd_watch(args)
