@@ -52,6 +52,14 @@ def _log_429(fn, *args, **kwargs):
         raise
 
 
+def _to_bytes(files: dict) -> dict:
+    """Convert a str-valued dict to bytes-valued for upload_file()."""
+    return {
+        k: (v.encode("utf-8") if isinstance(v, str) else v)
+        for k, v in files.items()
+    }
+
+
 # ---------------------------------------------------------------------------
 # Framework-specific mock file sets
 # ---------------------------------------------------------------------------
@@ -194,7 +202,7 @@ class TestClientIntegration(unittest.TestCase):
     # 03. Upload + Create (nanobot — richest file set)
     # -----------------------------------------------------------------------
     def test_06_upload_and_create(self):
-        file_id = _log_429(self.client.upload_file, NANOBOT_FILES)
+        file_id = _log_429(self.client.upload_file, _to_bytes(NANOBOT_FILES))
         self.assertTrue(file_id)
 
         result = _log_429(
@@ -211,7 +219,7 @@ class TestClientIntegration(unittest.TestCase):
     def test_07_repeated_upload(self):
         _wait_server(3)
         for i in range(2):
-            fid = _log_429(self.client.upload_file, NANOBOT_FILES)
+            fid = _log_429(self.client.upload_file, _to_bytes(NANOBOT_FILES))
             self.assertTrue(fid)
             result = _log_429(
                 self.client.create_repo,
@@ -229,7 +237,7 @@ class TestClientIntegration(unittest.TestCase):
         modified["SOUL.md"] += "\n## Custom Section\nUser added this.\n"
         modified["new_file.md"] = "# New File\nAdded in update.\n"
 
-        fid = _log_429(self.client.upload_file, modified)
+        fid = _log_429(self.client.upload_file, _to_bytes(modified))
         self.assertTrue(fid)
 
         result = _log_429(
@@ -299,7 +307,7 @@ class TestClientIntegration(unittest.TestCase):
     # 09. E2E roundtrip
     # -----------------------------------------------------------------------
     def test_15_e2e_roundtrip(self):
-        fid = _log_429(self.client.upload_file, NANOBOT_FILES)
+        fid = _log_429(self.client.upload_file, _to_bytes(NANOBOT_FILES))
         self.assertTrue(fid)
         _log_429(
             self.client.create_repo,
@@ -329,7 +337,7 @@ class TestClientIntegration(unittest.TestCase):
         for fw, files in ALL_FRAMEWORK_FILES.items():
             with self.subTest(framework=fw):
                 agent = f"{AGENT_NAME}-{fw}"
-                fid = _log_429(self.client.upload_file, files)
+                fid = _log_429(self.client.upload_file, _to_bytes(files))
                 self.assertTrue(fid)
                 try:
                     result = _log_429(
@@ -351,7 +359,7 @@ class TestClientIntegration(unittest.TestCase):
                 source_files = ALL_FRAMEWORK_FILES[source_fw]
                 agent = f"{AGENT_NAME}-conv-{source_fw}"
 
-                fid = _log_429(self.client.upload_file, source_files)
+                fid = _log_429(self.client.upload_file, _to_bytes(source_files))
                 try:
                     _log_429(
                         self.client.create_repo,
@@ -406,14 +414,14 @@ class TestClientIntegration(unittest.TestCase):
             fid = _log_429(self.client.upload_file, {})
             # Accepted is fine; empty file_id is also acceptable
         except ApiError:
-            pass  # server may reject empty zips
+            pass  # server may reject empty uploads
 
     # -----------------------------------------------------------------------
     # 13. Edge: large file
     # -----------------------------------------------------------------------
     def test_19_large_file(self):
         large_content = "x" * (500 * 1024)
-        files = {"SOUL.md": "# Soul\nLarge file test.\n", "data/large.txt": large_content}
+        files = {"SOUL.md": b"# Soul\nLarge file test.\n", "data/large.txt": large_content.encode("utf-8")}
         fid = _log_429(self.client.upload_file, files)
         self.assertTrue(fid)
 
@@ -422,9 +430,9 @@ class TestClientIntegration(unittest.TestCase):
     # -----------------------------------------------------------------------
     def test_20_special_chars_path(self):
         files = {
-            "SOUL.md": "# Soul\nSpecial chars test.\n",
-            "memory/user-notes (1).md": "# Notes\nParentheses in filename.\n",
-            "skills/web-search-v2/SKILL.md": "# Web Search v2\nHyphen in skill name.\n",
+            "SOUL.md": b"# Soul\nSpecial chars test.\n",
+            "memory/user-notes (1).md": b"# Notes\nParentheses in filename.\n",
+            "skills/web-search-v2/SKILL.md": b"# Web Search v2\nHyphen in skill name.\n",
         }
         fid = _log_429(self.client.upload_file, files)
         self.assertTrue(fid)
@@ -435,7 +443,7 @@ class TestClientIntegration(unittest.TestCase):
     def test_21_visibility_variants(self):
         for vis in ["public", "private"]:
             with self.subTest(visibility=vis):
-                files = {"SOUL.md": f"# Soul\nVisibility={vis} test.\n"}
+                files = {"SOUL.md": f"# Soul\nVisibility={vis} test.\n".encode("utf-8")}
                 fid = _log_429(self.client.upload_file, files)
                 self.assertTrue(fid)
                 result = _log_429(
@@ -451,7 +459,7 @@ class TestClientIntegration(unittest.TestCase):
     # 16. Edge: upload then immediate download
     # -----------------------------------------------------------------------
     def test_22_immediate_download(self):
-        files = {"SOUL.md": "# Soul\nImmediate download test.\n", "README.md": "# README\n"}
+        files = {"SOUL.md": b"# Soul\nImmediate download test.\n", "README.md": b"# README\n"}
         fid = _log_429(self.client.upload_file, files)
         _log_429(
             self.client.create_repo,
@@ -479,7 +487,7 @@ class TestClientIntegration(unittest.TestCase):
             with self.subTest(framework=fw):
                 files = ALL_FRAMEWORK_FILES[fw]
                 agent = f"{AGENT_NAME}-struct-{fw}"
-                fid = _log_429(self.client.upload_file, files)
+                fid = _log_429(self.client.upload_file, _to_bytes(files))
                 try:
                     _log_429(
                         self.client.create_repo,
