@@ -1,9 +1,7 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 """CLI argument parsing and upload flow (against a stubbed client)."""
-import io
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -20,20 +18,16 @@ class _StubClient:
         self.server = server
         self.token = token
         self.created = []
-        self.uploaded_zip = None
+        self.uploaded_resources = None
         _StubClient.instances.append(self)
 
     def check_repo(self, path, name):
         return False
 
     def upload_file(self, resources):
-        """Accept either dict or bytes; return a fake file_id."""
-        if isinstance(resources, dict):
-            from ultron.cli.sync import zip_resources
-            self.uploaded_zip = zip_resources(resources)
-        else:
-            self.uploaded_zip = resources
-        return "fake-file-id"
+        """Accept Dict[str, bytes]; return a fake Gid."""
+        self.uploaded_resources = resources
+        return "fake-gid-uuid"
 
     def create_repo(self, path, name, framework, **kwargs):
         self.created.append((path, name, framework, kwargs.get("system_prompt_files")))
@@ -93,13 +87,15 @@ class TestUploadCli(unittest.TestCase):
         # create_repo called with (group, repo_name, framework, system_prompt_files)
         self.assertEqual(len(client.created), 1)
         self.assertEqual(client.created[0][:3], ("u", "qoder-reviewer", "qoder"))
-        self.assertEqual(client.created[0][3], "fake-file-id")
-        # Verify zip content
-        self.assertIsNotNone(client.uploaded_zip)
-        with zipfile.ZipFile(io.BytesIO(client.uploaded_zip)) as zf:
-            paths = {p.removeprefix("agent/") for p in zf.namelist()}
-        self.assertIn("agents/reviewer.md", paths)
-        self.assertIn("AGENTS.md", paths)
+        self.assertEqual(client.created[0][3], "fake-gid-uuid")
+        # Verify uploaded resources are bytes-valued dict
+        self.assertIsNotNone(client.uploaded_resources)
+        self.assertIsInstance(client.uploaded_resources, dict)
+        self.assertIn("agents/reviewer.md", client.uploaded_resources)
+        self.assertIn("AGENTS.md", client.uploaded_resources)
+        # Values should be bytes
+        for v in client.uploaded_resources.values():
+            self.assertIsInstance(v, bytes)
 
     @mock.patch.object(commands.config, "resolve_server", return_value=None)
     @mock.patch.object(commands.config, "resolve_token", return_value=None)
@@ -188,12 +184,11 @@ class TestUploadCli(unittest.TestCase):
         ])
         self.assertEqual(rc, 0)
         client = _StubClient.instances[0]
-        # Repo should be "default" (no name specified, global mode).
+        # Repo should be "qoder" (no name specified, global mode).
         self.assertEqual(client.created[0][1], "qoder")
         # Verify that no agents/*.md files are uploaded.
-        with zipfile.ZipFile(io.BytesIO(client.uploaded_zip)) as zf:
-            paths = {p.removeprefix("agent/") for p in zf.namelist()}
-        for p in paths:
+        self.assertIsNotNone(client.uploaded_resources)
+        for p in client.uploaded_resources.keys():
             self.assertFalse(p.startswith("agents/"))
 
 

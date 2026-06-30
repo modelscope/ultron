@@ -191,7 +191,10 @@ class TestUploadDownload(unittest.TestCase):
         for rel, content in files.items():
             fp = Path(tmpdir) / rel
             fp.parent.mkdir(parents=True, exist_ok=True)
-            fp.write_text(content, encoding="utf-8")
+            if isinstance(content, bytes):
+                fp.write_bytes(content)
+            else:
+                fp.write_text(content, encoding="utf-8")
         return tmpdir
 
     def _cleanup_dir(self, path: str):

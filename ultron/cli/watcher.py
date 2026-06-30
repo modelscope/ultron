@@ -15,6 +15,7 @@ from .sync import (
     backup_local,
     detect_local_changes,
     pull_incremental,
+    push_incremental,
     push_resources,
 )
 
@@ -71,7 +72,7 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
                 continue
 
         # ---- Collect local resources & detect changes ----
-        local_resources = spec.collect()
+        local_resources = spec.collect_bytes()
         scope = set(local_resources.keys()) | set(state.get("remote_files", {}).keys())
         remote_sha_map = {f.path: f.sha256 for f in remote_files if f.path in scope}
 
@@ -109,11 +110,20 @@ def _sync_action(
     remote_files, local_resources, logger,
 ) -> bool:
     """Execute the appropriate sync action. Returns True if something changed."""
+    state = load_sync_state(name)
+
     if push_only:
         if not local_changed:
             return False
-        push_resources(client, username, name, framework, local_resources)
-        logger.info("Pushed local changes.")
+        if not state.get("remote_files"):
+            # First time: full upload (two-step OSS + create_repo)
+            push_resources(client, username, name, framework, local_resources)
+            logger.info("Pushed local changes (full upload — first time).")
+        else:
+            # Subsequent: incremental commit
+            changed = detect_local_changes(local_resources, state["remote_files"])
+            push_incremental(client, username, name, changed, set(state["remote_files"].keys()))
+            logger.info("Pushed local changes (incremental commit).")
         return True
 
     if remote_changed and local_changed:
@@ -125,8 +135,13 @@ def _sync_action(
         pull_incremental(client, username, name, spec, remote_files, local_resources)
         logger.info("Pulled remote changes (backup: %s).", backup_path)
     elif local_changed:
-        push_resources(client, username, name, framework, local_resources)
-        logger.info("Pushed local changes.")
+        if not state.get("remote_files"):
+            push_resources(client, username, name, framework, local_resources)
+            logger.info("Pushed local changes (full upload — first time).")
+        else:
+            changed = detect_local_changes(local_resources, state["remote_files"])
+            push_incremental(client, username, name, changed, set(state["remote_files"].keys()))
+            logger.info("Pushed local changes (incremental commit).")
     else:
         return False
     return True
@@ -137,7 +152,7 @@ def _refresh_baseline(client, username: str, name: str, spec, state: dict, logge
     for attempt in range(3):
         try:
             fresh = client.list_repo_files_detail(username, name)
-            managed = set(spec.collect().keys())
+            managed = set(spec.collect_bytes().keys())
             state["last_commit_date"] = max((f.committed_date for f in fresh), default=0)
             state["remote_files"] = {f.path: f.sha256 for f in fresh if f.path in managed}
             return

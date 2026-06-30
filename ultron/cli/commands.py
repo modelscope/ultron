@@ -194,7 +194,7 @@ def cmd_upload(args) -> int:
 
     spec = _build_allowlist(framework, local_name, args.local_dir)
     root = spec.workspace_root
-    resources: Dict[str, str] = spec.collect()
+    resources: Dict[str, bytes] = spec.collect_bytes()
     if not resources:
         display_name = local_name if local_name != GLOBAL_AGENT_NAME else "global"
         return _fail(
@@ -202,10 +202,10 @@ def cmd_upload(args) -> int:
             f"Check the path or pass --local_dir."
         )
 
-    total_bytes = sum(len(c.encode("utf-8")) for c in resources.values())
+    total_bytes = sum(len(v) for v in resources.values())
     print(f"Found {len(resources)} file(s) ({total_bytes} bytes) under {root}:")
     for rel in sorted(resources):
-        print(f"  {rel} ({len(resources[rel].encode('utf-8'))} B)")
+        print(f"  {rel} ({len(resources[rel])} B)")
 
     if args.dry_run:
         print("\n[dry-run] nothing uploaded.")

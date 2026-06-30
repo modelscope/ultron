@@ -136,13 +136,13 @@ class ClawWorkspaceAllowlist(ABC):
                 return True
         return False
 
-    def collect(self) -> Dict[str, str]:
-        """Gather allowed workspace files as {relative_path: text_content}."""
+    def _walk_matched(self) -> "List[tuple]":
+        """Walk workspace and yield (rel_path, Path) for matched files."""
         root = self.workspace_root
         if not root.is_dir():
-            return {}
+            return []
         patterns = self._resolved_patterns()
-        result: Dict[str, str] = {}
+        matched: List[tuple] = []
         for dirpath, dirnames, filenames in os.walk(root):
             # Skip hidden directories in-place (prevents descending into them).
             dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
@@ -161,9 +161,33 @@ class ClawWorkspaceAllowlist(ABC):
                 try:
                     if f.stat().st_size > MAX_FILE_SIZE:
                         continue
-                    result[rel] = f.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError) as e:
-                    logger.debug("Skip %s: %s", f, e)
+                except OSError:
+                    continue
+                matched.append((rel, f))
+        return matched
+
+    def collect(self) -> Dict[str, str]:
+        """Gather allowed workspace files as {relative_path: text_content}."""
+        result: Dict[str, str] = {}
+        for rel, f in self._walk_matched():
+            try:
+                result[rel] = f.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as e:
+                logger.warning("Skip %s: %s", f, e)
+        return result
+
+    def collect_bytes(self) -> Dict[str, bytes]:
+        """Gather allowed workspace files as {relative_path: raw_bytes}.
+
+        Unlike :meth:`collect`, this includes binary files (images, PDFs, etc.)
+        and does not skip on UnicodeDecodeError.
+        """
+        result: Dict[str, bytes] = {}
+        for rel, f in self._walk_matched():
+            try:
+                result[rel] = f.read_bytes()
+            except OSError as e:
+                logger.warning("Skip %s: %s", f, e)
         return result
 
     def list_agents(self) -> List[str]:
