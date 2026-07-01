@@ -281,7 +281,7 @@ _DEFAULT_WATCH_PATTERNS = [
 ]
 
 
-def stop_daemon(extra_patterns: "List[str] | None" = None) -> bool:
+def stop_daemon(extra_patterns: Optional[List[str]] = None) -> bool:
     """Stop ALL running watch daemon processes.
 
     Kills the PID-file-tracked process, then scans for orphaned processes.
@@ -328,19 +328,17 @@ def stop_daemon(extra_patterns: "List[str] | None" = None) -> bool:
     return stopped
 
 
-def _find_watch_pids(extra_patterns: "List[str] | None" = None) -> List[int]:
+def _find_watch_pids(extra_patterns: Optional[List[str]] = None) -> List[int]:
     """Find PIDs of running watch daemon processes via pgrep.
 
     Searches default patterns plus any *extra_patterns* provided by the caller.
     """
-    patterns = list(_DEFAULT_WATCH_PATTERNS)
-    if extra_patterns:
-        patterns.extend(extra_patterns)
+    patterns = list(dict.fromkeys(_DEFAULT_WATCH_PATTERNS + (extra_patterns or [])))
     pids: set = set()
     for pattern in patterns:
         try:
             result = subprocess.run(
-                ["pgrep", "-f", pattern],
+                ["pgrep", "-f", "--", pattern],
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0:
