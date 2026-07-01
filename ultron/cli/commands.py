@@ -381,11 +381,13 @@ def cmd_watch(args) -> int:
     if framework not in ALLOWLIST_REGISTRY:
         return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
 
-    # Resolve local agent name: default to global mode (shared files only).
-    local_name, err = _resolve_local_name(args.name, framework, args.local_dir)
-    if err:
-        # For watch, if multiple agents exist and name not specified, use global.
-        local_name = GLOBAL_AGENT_NAME
+    # Resolve local agent name: if --name not given, default to ALL mode.
+    if args.name:
+        local_name, err = _resolve_local_name(args.name, framework, args.local_dir)
+        if err:
+            return _fail(err)
+    else:
+        local_name = ALL_AGENT_NAME
 
     server = config.resolve_server(args.server)
     token = config.resolve_token(args.token)

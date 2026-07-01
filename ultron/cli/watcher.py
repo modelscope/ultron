@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from logging.handlers import RotatingFileHandler
 from typing import List, Optional
@@ -50,16 +51,18 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
 
     state = load_sync_state(repo)
     running = True
+    stop_event = threading.Event()
 
     def _handle_term(signum, frame):
         nonlocal running
         running = False
+        stop_event.set()
 
     signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
 
     while running:
-        time.sleep(interval)
+        stop_event.wait(timeout=interval)
         if not running:
             break
 
@@ -238,7 +241,9 @@ def _daemonize_windows(target, *args, **kwargs):
 
     # Serialize the arguments that watch_loop needs.
     # spec (args[0]) carries the agent_name used to build the allowlist scope.
+    # client (args[1]) carries server/token for the child process.
     spec_obj = args[0] if len(args) > 0 else None
+    client_obj = args[1] if len(args) > 1 else None
     payload = {
         "username": args[2] if len(args) > 2 else kwargs.get("username", ""),
         "repo": args[3] if len(args) > 3 else kwargs.get("repo", ""),
@@ -246,6 +251,8 @@ def _daemonize_windows(target, *args, **kwargs):
         "interval": args[5] if len(args) > 5 else kwargs.get("interval", 120),
         "push_only": kwargs.get("push_only", True),
         "local_name": getattr(spec_obj, "agent_name", "") if spec_obj else "",
+        "server": getattr(client_obj, "server", "") if client_obj else "",
+        "token": getattr(client_obj, "token", "") if client_obj else "",
         # spec and client are rebuilt in the child from stored config.
     }
     # Write to a temp file that the child will read and delete.
@@ -307,9 +314,16 @@ def stop_daemon(extra_patterns: "List[str] | None" = None) -> bool:
             except (ProcessLookupError, PermissionError):
                 pass
 
-    # 3. Wait for processes to exit (up to 3s).
+    # 3. Wait for processes to exit (up to 3s); SIGKILL if still alive.
     if stopped:
         time.sleep(1)
+        # Verify tracked process is gone; force-kill if not.
+        if tracked_pid:
+            try:
+                os.kill(tracked_pid, 0)  # Check if still alive.
+                os.kill(tracked_pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
 
     return stopped
 

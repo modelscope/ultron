@@ -225,8 +225,10 @@ def _run_watch_daemon(param_path: str) -> int:
     if not repo:
         repo = "default"
 
-    server = resolve_server(None)
-    token = resolve_token(None)
+    # Prefer serialized server/token (supports modelscope integration);
+    # fall back to ultron's own config for standalone usage.
+    server = payload.get("server") or resolve_server(None)
+    token = payload.get("token") or resolve_token(None)
     if not server or not token or not username:
         return 1
 

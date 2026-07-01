@@ -102,6 +102,8 @@ def push_resources(
         logger.warning("upload_file returned empty gid; skipping create_repo.")
         return
     client.create_repo(username, name, framework, system_prompt_files=gid)
+    for rel in sorted(resources):
+        logger.info("  UPLOAD: %s (%d B)", rel, len(resources[rel]))
     logger.info("Pushed %d file(s) via OSS (gid=%s).", len(resources), gid)
 
 
@@ -133,6 +135,8 @@ def push_incremental(
                 actions.append({"action": action_type, "file_path": fpath,
                                 "content": b64, "encoding": "base64"})
     if actions:
+        for a in actions:
+            logger.info("  %s: %s", a["action"].upper(), a["file_path"])
         client.commit_files(username, name, actions, commit_message="watch sync")
         logger.info("Committed %d action(s) incrementally.", len(actions))
 
