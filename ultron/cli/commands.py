@@ -176,7 +176,7 @@ def cmd_list(args) -> int:
             tmp = _build_allowlist(framework, GLOBAL_AGENT_NAME, getattr(args, 'local_dir', None))
         else:
             tmp = _build_allowlist(framework, a, getattr(args, 'local_dir', None))
-        count = len(tmp.collect())
+        count = len(tmp.collect_bytes())
         label = " (global/shared files only)" if a == DEFAULT_AGENT_NAME else ""
         print(f"  {a} — {count} file(s){label}")
     return 0

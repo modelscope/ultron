@@ -62,14 +62,14 @@ def sha256_content(content: Union[str, bytes]) -> str:
 def detect_local_changes(
     local_resources: Dict[str, bytes],
     baseline_sha256: Dict[str, str],
-) -> Dict[str, bytes]:
+) -> Dict[str, Union[bytes, None]]:
     """Compare local files against the sync baseline sha256 map.
 
     Returns a dict of files that differ:
-      - key present with non-empty value: content changed or file is new locally
-      - key present with empty bytes value: file was deleted locally (in baseline but not local)
+      - key present with bytes value: content changed or file is new locally
+      - key present with None value: file was deleted locally (in baseline but not local)
     """
-    changed: Dict[str, bytes] = {}
+    changed: Dict[str, Union[bytes, None]] = {}
     # Modified or new files.
     for rel, content in local_resources.items():
         local_sha = sha256_content(content)
@@ -78,7 +78,7 @@ def detect_local_changes(
     # Deleted files (in baseline but not in local).
     for rel in baseline_sha256:
         if rel not in local_resources:
-            changed[rel] = b""
+            changed[rel] = None
     return changed
 
 
@@ -111,7 +111,7 @@ def push_incremental(
     client: "UltronClient",
     username: str,
     name: str,
-    changed: Dict[str, bytes],
+    changed: Dict[str, Union[bytes, None]],
     remote_paths: set,
 ) -> None:
     """Incremental push via commit interface.
@@ -121,7 +121,7 @@ def push_incremental(
     """
     actions: List[dict] = []
     for fpath, content in changed.items():
-        if not content:  # empty bytes = delete
+        if content is None:  # None = delete
             actions.append({"action": "delete", "file_path": fpath})
         else:
             action_type = "update" if fpath in remote_paths else "create"
