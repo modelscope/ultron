@@ -203,11 +203,39 @@ class UltronClient:
             raise ApiError(body.get("Code", 0), body.get("Message", "upload credential failed"))
         return body["Data"]
 
+    @staticmethod
+    def _normalize_oss_url(url: str) -> str:
+        """Decode %2F in the URL path so OSS signature verification passes.
+
+        The server may return signed URLs with path separators encoded as %2F.
+        OSS computes the signature on the *decoded* resource path, so we must
+        send the request with real '/' in the path.  We only decode the path
+        portion (before '?') to avoid corrupting query-string parameters.
+        """
+        if "%2F" not in url and "%2f" not in url:
+            return url
+        parts = url.split("?", 1)
+        from urllib.parse import unquote
+        decoded_path = unquote(parts[0])
+        if len(parts) == 2:
+            return decoded_path + "?" + parts[1]
+        return decoded_path
+
     def _upload_to_oss(self, signed_url: str, data: bytes) -> None:
-        """Step 2: PUT raw bytes to signed OSS URL."""
+        """Step 2: PUT raw bytes to signed OSS URL.
+
+        The server signs the URL with these headers in the StringToSign:
+        - Content-Type: application/octet-stream
+        - x-oss-meta-author: aliy  (included in CanonicalizedOSSHeaders)
+        Both MUST be present for the signature to match.
+        """
+        url = self._normalize_oss_url(signed_url)
         try:
-            resp = requests.put(signed_url, data=data,
-                                headers={"Content-Type": "application/octet-stream"},
+            resp = requests.put(url, data=data,
+                                headers={
+                                    "Content-Type": "application/octet-stream",
+                                    "x-oss-meta-author": "aliy",
+                                },
                                 timeout=max(self.timeout, 300))
             resp.raise_for_status()
         except requests.HTTPError as exc:
