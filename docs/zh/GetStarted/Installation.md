@@ -44,7 +44,7 @@ Ultron 主要使用 LLM API，因此只需 CPU 环境即可运行。
 
 ## 环境变量
 
-智能摄取与 LLM 分类需要配置 OpenAI-compatible LLM 参数。**推荐**在 `**~/.ultron/.env`** 中设置 `ULTRON_LLM_PROVIDER`、`ULTRON_MODEL`、`ULTRON_BASE_URL`、`ULTRON_API_KEY`。向量嵌入仍使用 `DASHSCOPE_API_KEY`。
+智能摄取与 LLM 分类需要配置 OpenAI-compatible LLM 参数。**推荐**在 `**~/.ultron/.env`** 中设置 `ULTRON_LLM_PROVIDER`、`ULTRON_MODEL`、`ULTRON_BASE_URL`、`ULTRON_API_KEY`。向量嵌入默认使用 `DASHSCOPE_API_KEY`；如需改用其他模型，可将 `ULTRON_EMBEDDING_BACKEND` 设为 `local`（本地 sentence-transformers）或 `openai`（任意 OpenAI-compatible `/embeddings` 接口，如智谱 `embedding-3`、OpenAI、vLLM/TEI 等，通过 `ULTRON_EMBEDDING_BASE_URL`/`ULTRON_EMBEDDING_API_KEY` 配置）。
 
 也可在 shell 中导出（适用于一次性调试）：
 
@@ -65,8 +65,10 @@ export ULTRON_API_KEY="your-api-key"
 | 变量                             | 说明                  | 默认值                                     |
 | ------------------------------ | ------------------- | --------------------------------------- |
 | `ULTRON_EMBEDDING_MODEL`       | TextEmbedding 模型名   | `text-embedding-v4`                     |
-| `ULTRON_EMBEDDING_BACKEND`     | 嵌入后端（`dashscope` 或 `local`） | `dashscope`                     |
+| `ULTRON_EMBEDDING_BACKEND`     | 嵌入后端（`dashscope`、`openai` 或 `local`） | `dashscope`                     |
 | `ULTRON_EMBEDDING_DIMENSION`   | 向量维度                | `1024`                                  |
+| `ULTRON_EMBEDDING_BASE_URL`    | `openai` 后端的 OpenAI-compatible `/embeddings` 根 URL（未设时回退 `ULTRON_BASE_URL`） | `""` |
+| `ULTRON_EMBEDDING_API_KEY`     | `openai` 后端的 API Key（未设时回退 `ULTRON_API_KEY` / `OPENAI_API_KEY`） | `""` |
 | `ULTRON_LLM_PROVIDER`          | OpenAI-compatible 提供方标识 | `dashscope`                          |
 | `ULTRON_MODEL`                 | 智能摄取与记忆提取所用 LLM     | `qwen3.6-flash`                          |
 | `ULTRON_MEMORY_CATEGORY_MODEL` | 记忆类型分类所用 LLM        | `qwen3.6-flash`                         |

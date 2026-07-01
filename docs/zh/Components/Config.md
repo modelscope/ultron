@@ -6,7 +6,7 @@ description: Ultron（奥创）配置说明
 
 # 配置
 
-Ultron 使用 `UltronConfig` 数据类进行配置管理。**环境变量 `ULTRON_*`** 决定各字段的默认值；在代码里构造 `UltronConfig(...)` 时传入的参数 **优先于** 环境变量。LLM 采用 OpenAI-compatible 抽象（`llm_provider`、`llm_model`、`llm_base_url`、`llm_api_key`）。向量嵌入由 `embedding_backend` 选择（`dashscope` 或 `local`）；`dashscope_api_key` 可与 LLM 共用 `DASHSCOPE_API_KEY`，并在 `Ultron(...)` 初始化时写入 `os.environ`（若已设置）。`llm_api_key` 的解析顺序为：`ULTRON_API_KEY` → `ULTRON_LLM_API_KEY` → `OPENAI_API_KEY` → `DASHSCOPE_API_KEY`。
+Ultron 使用 `UltronConfig` 数据类进行配置管理。**环境变量 `ULTRON_*`** 决定各字段的默认值；在代码里构造 `UltronConfig(...)` 时传入的参数 **优先于** 环境变量。LLM 采用 OpenAI-compatible 抽象（`llm_provider`、`llm_model`、`llm_base_url`、`llm_api_key`）。向量嵌入由 `embedding_backend` 选择（`dashscope`、`openai` 或 `local`）；当为 `openai` 时通过 `embedding_base_url`/`embedding_api_key` 对接任意 OpenAI-compatible 的 `/embeddings` 接口（如智谱、OpenAI、vLLM/TEI 等）；`dashscope_api_key` 可与 LLM 共用 `DASHSCOPE_API_KEY`，并在 `Ultron(...)` 初始化时写入 `os.environ`（若已设置）。`llm_api_key` 的解析顺序为：`ULTRON_API_KEY` → `ULTRON_LLM_API_KEY` → `OPENAI_API_KEY` → `DASHSCOPE_API_KEY`。
 
 首次导入 `ultron.config`（或 `import ultron`）时，会调用 `load_ultron_dotenv()`：从 `~/.ultron/.env` 读取键值并写入 `os.environ`（`override=False`）。
 
@@ -54,7 +54,9 @@ ultron = Ultron(config=config)
 | --------------------- | --- | ------------------- | --------------------------- |
 | `embedding_model`     | str | `text-embedding-v4` | DashScope TextEmbedding 模型名 |
 | `embedding_dimension` | int | `1024`              | 向量维度（首次调用后以 API 返回为准）       |
-| `embedding_backend`   | str | `dashscope`         | 嵌入后端，支持 `dashscope` 或 `local`；同一服务数据目录仅允许一种后端与模型组合 |
+| `embedding_backend`   | str | `dashscope`         | 嵌入后端，支持 `dashscope`、`openai` 或 `local`；同一服务数据目录仅允许一种后端与模型组合 |
+| `embedding_base_url`  | str | 回退 `ULTRON_BASE_URL` | 仅 `openai` 后端使用：OpenAI-compatible `/embeddings` 根 URL；环境变量 `ULTRON_EMBEDDING_BASE_URL` |
+| `embedding_api_key`   | str | 回退 `ULTRON_API_KEY` / `OPENAI_API_KEY` | 仅 `openai` 后端使用：嵌入服务 API Key；环境变量 `ULTRON_EMBEDDING_API_KEY` |
 
 
 ### LLM 配置
@@ -202,6 +204,8 @@ HTTP 日志见 [安装指南](../GetStarted/Installation.md)（`ULTRON_LOG_LEVEL
 | `ULTRON_EMBEDDING_BACKEND`                  | `embedding_backend`                  |
 | `ULTRON_EMBEDDING_MODEL`                    | `embedding_model`                    |
 | `ULTRON_EMBEDDING_DIMENSION`                | `embedding_dimension`                |
+| `ULTRON_EMBEDDING_BASE_URL`                 | `embedding_base_url`                 |
+| `ULTRON_EMBEDDING_API_KEY`                  | `embedding_api_key`                  |
 | `ULTRON_CONVERSATION_EXTRACT_WINDOW_TOKENS` | `conversation_extract_window_tokens` |
 | `ULTRON_TRAJECTORY_MEMORY_SCORE_THRESHOLD`  | `trajectory_memory_score_threshold`  |
 | `ULTRON_TRAJECTORY_SFT_SCORE_THRESHOLD`     | `trajectory_sft_score_threshold`     |

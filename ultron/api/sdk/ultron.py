@@ -67,6 +67,8 @@ class Ultron(MemoryMixin, SkillMixin, HarnessMixin, CoreMixin):
             model_name=self.config.embedding_model,
             embedding_dimension_hint=self.config.embedding_dimension,
             request_timeout_seconds=self.config.llm_request_timeout_seconds,
+            base_url=self.config.embedding_base_url,
+            api_key=self.config.embedding_api_key,
         )
         self._write_embedding_profile()
 
