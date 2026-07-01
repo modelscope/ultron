@@ -26,10 +26,8 @@ def zip_resources(resources: Dict[str, Union[str, bytes]], wrapper: str = "agent
     after stripping, the remaining path matches the original ``rel_path``.
 
     Args:
-        resources: A dict {rel_path: content_or_filepath}. If a value is a
-                   short string that points to an existing file on disk, its
-                   content is read; otherwise the value is treated as literal
-                   text content.
+        resources: A dict {rel_path: content}. Values are written directly
+                   via ``ZipFile.writestr`` (accepts both str and bytes).
         wrapper: Name of the top-level wrapper directory (default: "agent").
     """
     buf = io.BytesIO()

@@ -205,7 +205,7 @@ def _run_watch_daemon(param_path: str) -> int:
 
     from .cache import pid_file, log_file
     from .client import UltronClient
-    from .commands import _build_allowlist, _repo_name, ALL_AGENT_NAME
+    from .commands import _build_allowlist, ALL_AGENT_NAME
     from .config import resolve_server, resolve_token, resolve_username
     from .watcher import watch_loop
 
@@ -216,19 +216,22 @@ def _run_watch_daemon(param_path: str) -> int:
     ppath.unlink(missing_ok=True)
 
     username = payload.get("username") or resolve_username()
-    name = payload.get("name") or ALL_AGENT_NAME
+    repo = payload.get("repo") or payload.get("name", "")  # compat: fall back to legacy "name" key
     framework = payload.get("framework", "")
     interval = payload.get("interval", 120)
     push_only = payload.get("push_only", True)
+
+    if not repo:
+        repo = "default"
 
     server = resolve_server(None)
     token = resolve_token(None)
     if not server or not token or not username:
         return 1
 
-    spec = _build_allowlist(framework, name, None)
+    # Use ALL_AGENT_NAME as the local spec scope (watches all files).
+    spec = _build_allowlist(framework, ALL_AGENT_NAME, None)
     client = UltronClient(server, token)
-    repo = _repo_name(framework, name)
 
     # Redirect stdout/stderr to log file.
     import os

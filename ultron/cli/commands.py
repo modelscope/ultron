@@ -306,8 +306,8 @@ def cmd_download(args) -> int:
     root = spec.workspace_root
 
     # Filter downloaded resources by allowlist patterns.
-    patterns = spec._resolved_patterns()
-    filtered = {k: v for k, v in resources.items() if spec._matches(k, patterns)}
+    patterns = spec.resolved_patterns()
+    filtered = {k: v for k, v in resources.items() if spec.matches(k, patterns)}
     skipped = set(resources.keys()) - set(filtered.keys())
     if skipped:
         print(f"Skipped {len(skipped)} file(s) not matching allowlist:")

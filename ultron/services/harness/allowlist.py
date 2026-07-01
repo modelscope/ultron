@@ -123,7 +123,7 @@ class ClawWorkspaceAllowlist(ABC):
         """Whether we are in global-only mode (shared files only, no sub-agent)."""
         return self.agent_name == GLOBAL_AGENT_NAME
 
-    def _resolved_patterns(self) -> List[str]:
+    def resolved_patterns(self) -> List[str]:
         """Resolve glob patterns for the current agent mode.
 
         Convention: In global mode (``GLOBAL_AGENT_NAME``), patterns containing
@@ -138,7 +138,8 @@ class ClawWorkspaceAllowlist(ABC):
         name = "*" if self._is_all() else self.agent_name
         return [p.format(name=name) for p in self._effective_patterns()]
 
-    def _matches(self, rel_path: str, patterns: List[str]) -> bool:
+    def matches(self, rel_path: str, patterns: List[str]) -> bool:
+        """Return True if *rel_path* matches any of the given glob *patterns*."""
         for pattern in patterns:
             if fnmatch.fnmatch(rel_path, pattern):
                 return True
@@ -149,7 +150,7 @@ class ClawWorkspaceAllowlist(ABC):
         root = self.workspace_root
         if not root.is_dir():
             return []
-        patterns = self._resolved_patterns()
+        patterns = self.resolved_patterns()
         matched: List[tuple] = []
         for dirpath, dirnames, filenames in os.walk(root):
             # Skip hidden directories in-place (prevents descending into them).
@@ -164,7 +165,7 @@ class ClawWorkspaceAllowlist(ABC):
                     rel = f.relative_to(root).as_posix()
                 except ValueError:
                     continue
-                if not self._matches(rel, patterns):
+                if not self.matches(rel, patterns):
                     continue
                 try:
                     if f.stat().st_size > MAX_FILE_SIZE:
@@ -219,7 +220,7 @@ class ClawWorkspaceAllowlist(ABC):
         written: List[str] = []
         for rel_path, content in resources.items():
             target = (root / rel_path).resolve()
-            if not str(target).startswith(str(root)):
+            if not target.is_relative_to(root):
                 logger.warning("Path traversal blocked: %s", rel_path)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)

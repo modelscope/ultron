@@ -11,10 +11,10 @@ Endpoints:
 * ``POST /api/v1/agents/repo/files/upload``                → two-step OSS upload (step1)
 * ``POST /openapi/v1/agents/{path}/{name}/commit/{rev}``   → commit files
 """
+import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from urllib.parse import unquote
-import logging
 
 import requests
 from modelscope_hub._openapi import OpenAPIClient

@@ -236,7 +236,7 @@ def _daemonize_windows(target, *args, **kwargs):
     # Serialize the arguments that watch_loop needs.
     payload = {
         "username": args[2] if len(args) > 2 else kwargs.get("username", ""),
-        "name": args[3] if len(args) > 3 else kwargs.get("name", ""),
+        "repo": args[3] if len(args) > 3 else kwargs.get("repo", ""),
         "framework": args[4] if len(args) > 4 else kwargs.get("framework", ""),
         "interval": args[5] if len(args) > 5 else kwargs.get("interval", 120),
         "push_only": kwargs.get("push_only", True),
