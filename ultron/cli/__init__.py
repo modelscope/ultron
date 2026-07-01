@@ -220,6 +220,7 @@ def _run_watch_daemon(param_path: str) -> int:
     framework = payload.get("framework", "")
     interval = payload.get("interval", 120)
     push_only = payload.get("push_only", True)
+    local_name = payload.get("local_name") or ALL_AGENT_NAME
 
     if not repo:
         repo = "default"
@@ -229,8 +230,7 @@ def _run_watch_daemon(param_path: str) -> int:
     if not server or not token or not username:
         return 1
 
-    # Use ALL_AGENT_NAME as the local spec scope (watches all files).
-    spec = _build_allowlist(framework, ALL_AGENT_NAME, None)
+    spec = _build_allowlist(framework, local_name, None)
     client = UltronClient(server, token)
 
     # Redirect stdout/stderr to log file.

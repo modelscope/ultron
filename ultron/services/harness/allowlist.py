@@ -32,7 +32,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
@@ -145,13 +145,13 @@ class ClawWorkspaceAllowlist(ABC):
                 return True
         return False
 
-    def _walk_matched(self) -> "List[tuple]":
-        """Walk workspace and yield (rel_path, Path) for matched files."""
+    def _walk_matched(self) -> List[Tuple[str, Path]]:
+        """Walk workspace and return (rel_path, Path) for matched files."""
         root = self.workspace_root
         if not root.is_dir():
             return []
         patterns = self.resolved_patterns()
-        matched: List[tuple] = []
+        matched: List[Tuple[str, Path]] = []
         for dirpath, dirnames, filenames in os.walk(root):
             # Skip hidden directories in-place (prevents descending into them).
             dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))

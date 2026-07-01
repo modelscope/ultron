@@ -98,6 +98,9 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
 
         # ---- Update baseline on successful sync ----
         if did_sync:
+            # After a pull, local files may have changed — re-collect.
+            if not push_only:
+                local_resources = spec.collect_bytes()
             _refresh_baseline(client, username, repo, local_resources, state, logger)
             save_sync_state(repo, state["last_commit_date"], state["remote_files"])
 
@@ -234,12 +237,15 @@ def _daemonize_windows(target, *args, **kwargs):
     import tempfile
 
     # Serialize the arguments that watch_loop needs.
+    # spec (args[0]) carries the agent_name used to build the allowlist scope.
+    spec_obj = args[0] if len(args) > 0 else None
     payload = {
         "username": args[2] if len(args) > 2 else kwargs.get("username", ""),
         "repo": args[3] if len(args) > 3 else kwargs.get("repo", ""),
         "framework": args[4] if len(args) > 4 else kwargs.get("framework", ""),
         "interval": args[5] if len(args) > 5 else kwargs.get("interval", 120),
         "push_only": kwargs.get("push_only", True),
+        "local_name": getattr(spec_obj, "agent_name", "") if spec_obj else "",
         # spec and client are rebuilt in the child from stored config.
     }
     # Write to a temp file that the child will read and delete.

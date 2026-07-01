@@ -435,7 +435,7 @@ def cmd_watch(args) -> int:
     except ApiError as e:
         if e.status in (403, 401):
             return _fail(_api_error_message(e, "watch"))
-        pass  # repo not found or unreachable — proceed, first push will create it
+        # repo not found or unreachable — proceed, first push will create it
 
     interval = 120
     push_only = not getattr(args, "pull", False)
