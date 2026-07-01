@@ -13,11 +13,15 @@ Endpoints:
 """
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+from urllib.parse import unquote
+import logging
 
 import requests
 from modelscope_hub._openapi import OpenAPIClient
 from modelscope_hub.config import HubConfig
 from modelscope_hub.errors import HubError, NotExistError
+
+logger = logging.getLogger("ultron.cli")
 
 
 @dataclass
@@ -125,37 +129,53 @@ class UltronClient:
         return results
 
     def _fetch_tree_entries(self, path: str, name: str, revision: str) -> List[dict]:
-        """Fetch and normalize the repo file tree from the API."""
-        try:
-            data = self._openapi._request(
-                "GET", f"/agents/{path}/{name}/repo/files",
-                params={
-                    "recursive": "true",
-                    "page_size": "100",
-                    "page": "1",
-                    "revision": revision,
-                },
-            )
-        except HubError as exc:
-            raise _wrap(exc) from exc
+        """Fetch and normalize the repo file tree from the API (with pagination)."""
+        page = 1
+        page_size = 100
+        max_pages = 50  # safety cap: 5000 files max
+        all_entries: List[dict] = []
 
-        raw = []
-        if isinstance(data, dict):
-            raw = data.get("trees") or data.get("Trees") or []
-        elif isinstance(data, list):
-            raw = data
+        while True:
+            try:
+                data = self._openapi._request(
+                    "GET", f"/agents/{path}/{name}/repo/files",
+                    params={
+                        "recursive": "true",
+                        "page_size": str(page_size),
+                        "page": str(page),
+                        "revision": revision,
+                    },
+                )
+            except HubError as exc:
+                raise _wrap(exc) from exc
 
-        entries: List[dict] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            entries.append({
-                "path": item.get("path") or item.get("Path") or "",
-                "type": item.get("type") or item.get("Type") or "",
-                "sha256": item.get("sha256") or item.get("Sha256") or "",
-                "committed_date": item.get("committed_date") or item.get("Committed_date") or 0,
-            })
-        return entries
+            raw = []
+            if isinstance(data, dict):
+                raw = data.get("trees") or data.get("Trees") or []
+            elif isinstance(data, list):
+                raw = data
+
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                all_entries.append({
+                    "path": item.get("path") or item.get("Path") or "",
+                    "type": item.get("type") or item.get("Type") or "",
+                    "sha256": item.get("sha256") or item.get("Sha256") or "",
+                    "committed_date": item.get("committed_date") or item.get("Committed_date") or 0,
+                })
+
+            if len(raw) < page_size:
+                break
+            page += 1
+            if page > max_pages:
+                logger.warning(
+                    "Pagination limit reached (%d pages) for %s/%s; results may be incomplete.",
+                    max_pages, path, name,
+                )
+                break
+
+        return all_entries
 
     def download_repo_file(self, path: str, name: str, file_path: str,
                            revision: str = "master", *, binary: bool = False):
@@ -212,11 +232,11 @@ class UltronClient:
         send the request with real '/' in the path.  We only decode the path
         portion (before '?') to avoid corrupting query-string parameters.
         """
-        if "%2F" not in url and "%2f" not in url:
-            return url
         parts = url.split("?", 1)
-        from urllib.parse import unquote
-        decoded_path = unquote(parts[0])
+        path_part = parts[0]
+        if "%2F" not in path_part and "%2f" not in path_part:
+            return url
+        decoded_path = unquote(path_part)
         if len(parts) == 2:
             return decoded_path + "?" + parts[1]
         return decoded_path
@@ -228,6 +248,10 @@ class UltronClient:
         - Content-Type: application/octet-stream
         - x-oss-meta-author: aliy  (included in CanonicalizedOSSHeaders)
         Both MUST be present for the signature to match.
+
+        COUPLING: These headers are dictated by the server-side signing config.
+        If the server changes its signing parameters, these must be updated
+        in lockstep.
         """
         url = self._normalize_oss_url(signed_url)
         try:
@@ -250,13 +274,24 @@ class UltronClient:
 
         The returned Gid (UUID) is used as ``system_prompt_files`` in
         :meth:`create_repo`.
+
+        Returns empty string if *resources* is empty (nothing to upload).
         """
+        if not resources:
+            logger.warning("upload_file called with empty resources; skipping.")
+            return ""
         filenames = list(resources.keys())
         data = self._request_upload_urls(filenames)
         gid = data["Gid"]
         url_map = {item["Filename"]: item["Url"] for item in data["Urls"]}
         for fname, content in resources.items():
-            signed_url = url_map[fname]
+            signed_url = url_map.get(fname)
+            if not signed_url:
+                raise ApiError(
+                    0,
+                    f"Server did not return a signed URL for '{fname}'. "
+                    f"Available: {list(url_map.keys())}",
+                )
             self._upload_to_oss(signed_url, content)
         return gid
 

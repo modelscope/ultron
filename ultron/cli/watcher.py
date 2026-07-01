@@ -36,17 +36,19 @@ def _get_logger() -> logging.Logger:
     return _logger
 
 
-def watch_loop(spec, client, username: str, name: str, framework: str, interval: int = 120, *, push_only: bool = True):
+def watch_loop(spec, client, username: str, repo: str, framework: str, interval: int = 120, *, push_only: bool = True):
     """Sync loop: push local changes, optionally pull remote changes.
 
-    push_only=True (default): only pushes, never modifies local files.
-    push_only=False: full bidirectional sync (remote wins on conflict).
+    Args:
+        repo: Remote repository name (used as the API path component).
+        push_only: True (default) = only pushes, never modifies local files.
+                   False = full bidirectional sync (remote wins on conflict).
     """
     logger = _get_logger()
     logger.info("Watch started for %s/%s (root=%s, interval=%ds, push_only=%s)",
-                username, name, spec.workspace_root, interval, push_only)
+                username, repo, spec.workspace_root, interval, push_only)
 
-    state = load_sync_state(name)
+    state = load_sync_state(repo)
     running = True
 
     def _handle_term(signum, frame):
@@ -63,7 +65,7 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
 
         # ---- Fetch remote file list ----
         try:
-            remote_files = client.list_repo_files_detail(username, name)
+            remote_files = client.list_repo_files_detail(username, repo)
         except ApiError as e:
             if e.status in (404, 500):
                 remote_files = []
@@ -87,16 +89,17 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
         try:
             did_sync = _sync_action(
                 push_only, remote_changed, local_changed,
-                client, username, name, framework, spec,
+                client, username, repo, framework, spec,
                 remote_files, local_resources, logger,
+                state,
             )
         except Exception as exc:
             logger.error("Sync failed (will retry): %s", exc)
 
         # ---- Update baseline on successful sync ----
         if did_sync:
-            _refresh_baseline(client, username, name, spec, state, logger)
-            save_sync_state(name, state["last_commit_date"], state["remote_files"])
+            _refresh_baseline(client, username, repo, local_resources, state, logger)
+            save_sync_state(repo, state["last_commit_date"], state["remote_files"])
 
     logger.info("Watch stopped (signal received).")
     pf = pid_file()
@@ -104,27 +107,38 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
         pf.unlink(missing_ok=True)
 
 
+def _push_local(client, username, name, framework, local_resources, state, logger) -> bool:
+    """Push local changes: full upload on first time, incremental thereafter.
+
+    Returns True if something was actually pushed, False otherwise.
+    """
+    if not local_resources:
+        logger.debug("No local resources to push — skipping.")
+        return False
+    if not state.get("remote_files"):
+        push_resources(client, username, name, framework, local_resources)
+        logger.info("Pushed local changes (full upload — first time).")
+        return True
+    else:
+        changed = detect_local_changes(local_resources, state["remote_files"])
+        if changed:
+            push_incremental(client, username, name, changed, set(state["remote_files"].keys()))
+            logger.info("Pushed local changes (incremental commit).")
+            return True
+        return False
+
+
 def _sync_action(
     push_only, remote_changed, local_changed,
     client, username, name, framework, spec,
     remote_files, local_resources, logger,
+    state,
 ) -> bool:
     """Execute the appropriate sync action. Returns True if something changed."""
-    state = load_sync_state(name)
-
     if push_only:
         if not local_changed:
             return False
-        if not state.get("remote_files"):
-            # First time: full upload (two-step OSS + create_repo)
-            push_resources(client, username, name, framework, local_resources)
-            logger.info("Pushed local changes (full upload — first time).")
-        else:
-            # Subsequent: incremental commit
-            changed = detect_local_changes(local_resources, state["remote_files"])
-            push_incremental(client, username, name, changed, set(state["remote_files"].keys()))
-            logger.info("Pushed local changes (incremental commit).")
-        return True
+        return _push_local(client, username, name, framework, local_resources, state, logger)
 
     if remote_changed and local_changed:
         backup_path = backup_local(spec, name)
@@ -135,24 +149,22 @@ def _sync_action(
         pull_incremental(client, username, name, spec, remote_files, local_resources)
         logger.info("Pulled remote changes (backup: %s).", backup_path)
     elif local_changed:
-        if not state.get("remote_files"):
-            push_resources(client, username, name, framework, local_resources)
-            logger.info("Pushed local changes (full upload — first time).")
-        else:
-            changed = detect_local_changes(local_resources, state["remote_files"])
-            push_incremental(client, username, name, changed, set(state["remote_files"].keys()))
-            logger.info("Pushed local changes (incremental commit).")
+        _push_local(client, username, name, framework, local_resources, state, logger)
     else:
         return False
     return True
 
 
-def _refresh_baseline(client, username: str, name: str, spec, state: dict, logger) -> None:
-    """Re-fetch remote file list and update state in-place."""
+def _refresh_baseline(client, username: str, name: str, local_resources: dict, state: dict, logger) -> None:
+    """Re-fetch remote file list and update state in-place.
+
+    Uses *local_resources* keys as the managed-file scope to avoid a redundant
+    disk scan (caller already collected them this cycle).
+    """
+    managed = set(local_resources.keys())
     for attempt in range(3):
         try:
             fresh = client.list_repo_files_detail(username, name)
-            managed = set(spec.collect_bytes().keys())
             state["last_commit_date"] = max((f.committed_date for f in fresh), default=0)
             state["remote_files"] = {f.path: f.sha256 for f in fresh if f.path in managed}
             return

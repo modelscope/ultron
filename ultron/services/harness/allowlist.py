@@ -124,6 +124,14 @@ class ClawWorkspaceAllowlist(ABC):
         return self.agent_name == GLOBAL_AGENT_NAME
 
     def _resolved_patterns(self) -> List[str]:
+        """Resolve glob patterns for the current agent mode.
+
+        Convention: In global mode (``GLOBAL_AGENT_NAME``), patterns containing
+        the ``{name}`` placeholder are excluded because they target specific
+        sub-agents.  Shared/framework-level patterns (those without ``{name}``)
+        remain.  New frameworks MUST follow this convention: use ``{name}`` in
+        patterns that are per-agent and omit it for shared/global patterns.
+        """
         if self._is_global():
             # Global mode: exclude patterns containing {name} placeholder.
             return [p for p in self._effective_patterns() if "{name}" not in p]
@@ -198,6 +206,13 @@ class ClawWorkspaceAllowlist(ABC):
         """
         return [DEFAULT_AGENT_NAME]
 
+    def _list_agents_from_dir(self, agents_dir: Path) -> List[str]:
+        """List agents from a directory, prepending DEFAULT if not present."""
+        agents = _list_agent_files(agents_dir)
+        if DEFAULT_AGENT_NAME not in agents:
+            agents = [DEFAULT_AGENT_NAME] + agents
+        return agents
+
     def apply(self, resources: Dict[str, str]) -> List[str]:
         """Write resource files back to the workspace. Returns list of written paths."""
         root = self.workspace_root.resolve()
@@ -248,10 +263,7 @@ class NanobotWorkspaceAllowlist(ClawWorkspaceAllowlist):
         ]
 
     def list_agents(self) -> List[str]:
-        agents = _list_agent_files(self.workspace_root / "agents")
-        if DEFAULT_AGENT_NAME not in agents:
-            agents = [DEFAULT_AGENT_NAME] + agents
-        return agents
+        return self._list_agents_from_dir(self.workspace_root / "agents")
 
 
 class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
@@ -458,10 +470,7 @@ class QoderWorkspaceAllowlist(ClawWorkspaceAllowlist):
         ]
 
     def list_agents(self) -> List[str]:
-        agents = _list_agent_files(self.workspace_root / "agents")
-        if DEFAULT_AGENT_NAME not in agents:
-            agents = [DEFAULT_AGENT_NAME] + agents
-        return agents
+        return self._list_agents_from_dir(self.workspace_root / "agents")
 
 
 def _list_agent_files(agents_dir: Path) -> List[str]:

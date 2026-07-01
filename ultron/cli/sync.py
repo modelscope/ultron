@@ -35,10 +35,7 @@ def zip_resources(resources: Dict[str, Union[str, bytes]], wrapper: str = "agent
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel, value in sorted(resources.items()):
-            if isinstance(value, bytes):
-                zf.writestr(f"{wrapper}/{rel}", value)
-            else:
-                zf.writestr(f"{wrapper}/{rel}", value)
+            zf.writestr(f"{wrapper}/{rel}", value)
     return buf.getvalue()
 
 
@@ -97,8 +94,15 @@ def push_resources(
     """Full upload via two-step OSS, then create/update agent repo.
 
     Raises on failure (caller should NOT update baseline on exception).
+    Does nothing if *resources* is empty.
     """
+    if not resources:
+        logger.warning("push_resources called with empty resources; skipping.")
+        return
     gid = client.upload_file(resources)
+    if not gid:
+        logger.warning("upload_file returned empty gid; skipping create_repo.")
+        return
     client.create_repo(username, name, framework, system_prompt_files=gid)
     logger.info("Pushed %d file(s) via OSS (gid=%s).", len(resources), gid)
 
@@ -153,6 +157,7 @@ def pull_incremental(
     (caller should NOT update baseline on exception).
     """
     root: Path = spec.workspace_root
+    resolved_root = root.resolve()
     remote_sha_map = {f.path: f.sha256 for f in remote_files}
     remote_paths = set(remote_sha_map.keys())
     local_paths = set(local_resources.keys())
@@ -160,6 +165,10 @@ def pull_incremental(
 
     # Download files that are new or changed on remote.
     for rfile in remote_files:
+        target = (root / rfile.path).resolve()
+        if not target.is_relative_to(resolved_root):
+            logger.warning("  Skipped (path traversal): %s", rfile.path)
+            continue
         local_content = local_resources.get(rfile.path)
         if local_content is not None:
             local_sha = sha256_content(local_content)
@@ -167,7 +176,6 @@ def pull_incremental(
                 continue  # identical, skip
         # Need to download.
         content = client.download_repo_file(username, name, rfile.path, binary=True)
-        target = root / rfile.path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         changes += 1
@@ -175,7 +183,9 @@ def pull_incremental(
 
     # Delete local files that no longer exist on remote.
     for rel in sorted(local_paths - remote_paths):
-        target = root / rel
+        target = (root / rel).resolve()
+        if not target.is_relative_to(resolved_root):
+            continue
         if target.exists():
             target.unlink()
             changes += 1

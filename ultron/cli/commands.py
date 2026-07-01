@@ -5,7 +5,7 @@ import os
 import sys
 import zipfile
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from ultron.services.harness.allowlist import (
     ALLOWLIST_REGISTRY,
@@ -60,7 +60,7 @@ def _repo_name(framework: str, name: str) -> str:
     return "default"
 
 
-def _resolve_remote(repo: str = None, name: str = None, framework: str = "", username: str = ""):
+def _resolve_remote(repo: Optional[str] = None, name: Optional[str] = None, framework: str = "", username: str = ""):
     """Resolve remote target as (group, repo_name).
 
     - repo contains '/' → split into (group, repo_name), ignore username
@@ -77,7 +77,7 @@ def _resolve_remote(repo: str = None, name: str = None, framework: str = "", use
     return username, derived
 
 
-def _resolve_local_name(name: str, framework: str, local_dir=None):
+def _resolve_local_name(name: Optional[str], framework: str, local_dir=None):
     """Resolve local agent name when --name is omitted.
 
     Returns (resolved_name, error_message).
@@ -283,7 +283,9 @@ def cmd_download(args) -> int:
         paths = client.list_repo_files(group, repo)
         if not paths:
             return _fail(f"repository {group}/{repo} has no files.")
-        # List then fetch each file via its download link, one at a time.
+        # NOTE: downloads as text (str). Binary files (images, etc.) may lose
+        # fidelity when decoded as text. A future binary-aware path is needed
+        # for full parity with upload's collect_bytes.
         resources = {
             p: client.download_repo_file(group, repo, p) for p in paths
         }
