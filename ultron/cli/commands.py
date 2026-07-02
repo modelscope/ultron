@@ -172,8 +172,10 @@ def cmd_status(args) -> int:
     print(f"Agents for {framework}:")
     for a in agents:
         tmp = _build_allowlist(framework, a, getattr(args, 'local_dir', None))
-        count = len(tmp.collect_bytes())
-        print(f"  {a} — {count} file(s)")
+        files = tmp.collect_bytes()
+        print(f"  {a} — {len(files)} file(s), root: {tmp.workspace_root}")
+        for rel in sorted(files):
+            print(f"    {rel}")
     return 0
 
 
@@ -525,6 +527,24 @@ def cmd_recover(args) -> int:
 
     # --list mode: enumerate backups and exit
     if args.list:
+        # Filter by framework/name if provided (filename: {fw}_{name}_{date}_{time}.zip)
+        fw_filter = getattr(args, 'framework', None)
+        name_filter = getattr(args, 'name', None)
+        if fw_filter or name_filter:
+            filtered = []
+            for f in backups:
+                parts = f.stem.rsplit("_", 2)
+                if len(parts) >= 3:
+                    prefix = parts[0]  # e.g. "qwenpaw_default"
+                else:
+                    prefix = f.stem
+                if fw_filter and not prefix.startswith(fw_filter):
+                    continue
+                if name_filter and f"_{name_filter}_" not in f.stem:
+                    continue
+                filtered.append(f)
+            backups = filtered
+
         if not backups:
             print("No backups found.")
             return 0
