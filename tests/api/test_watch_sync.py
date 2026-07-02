@@ -137,7 +137,12 @@ class TestWatchSync(unittest.TestCase):
 
     def _upload_remote(self, name: str, framework: str, files: dict):
         """Upload files directly to remote (simulates remote-side changes)."""
-        file_id = self.client.upload_file(files)
+        # Convert str values to bytes for the new upload_file API
+        byte_files = {
+            k: (v.encode("utf-8") if isinstance(v, str) else v)
+            for k, v in files.items()
+        }
+        file_id = self.client.upload_file(byte_files)
         self.client.create_repo(self.username, name, framework, system_prompt_files=file_id)
 
     def _start_watch(self, framework: str, agent_name: str, local_dir: str, repo_name: str, push_only: bool = True) -> multiprocessing.Process:
@@ -557,10 +562,12 @@ class TestWatchSync(unittest.TestCase):
         args = SimpleNamespace(
             framework="qoder",
             name="reviewer",
+            repo=None,
             local_dir=None,
             server=SERVER,
             token=TOKEN,
             interval=60,
+            pull=False,
             sessions_dir=None,
         )
         rc = cmd_watch(args)

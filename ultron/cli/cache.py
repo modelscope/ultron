@@ -41,6 +41,15 @@ def pid_file() -> Path:
     return cache_dir() / "watch.pid"
 
 
+def stop_file() -> Path:
+    """Stop signal file: presence tells the watch loop to exit gracefully.
+
+    Cross-platform mechanism — works on both Unix and Windows where signal
+    delivery is unreliable.
+    """
+    return cache_dir() / "watch.stop"
+
+
 # ---- Sync state persistence ----
 
 def sync_state_file(name: str) -> Path:

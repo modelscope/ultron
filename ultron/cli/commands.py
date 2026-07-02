@@ -5,9 +5,14 @@ import os
 import sys
 import zipfile
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
-from ultron.services.harness.allowlist import ALLOWLIST_REGISTRY, ALL_AGENT_NAME
+from ultron.services.harness.allowlist import (
+    ALLOWLIST_REGISTRY,
+    ALL_AGENT_NAME,
+    DEFAULT_AGENT_NAME,
+    GLOBAL_AGENT_NAME,
+)
 from ultron.services.harness.defaults import get_defaults
 from ultron.services.harness.merge import merge_resources
 
@@ -53,6 +58,55 @@ def _repo_name(framework: str, name: str) -> str:
     if n:
         return n
     return "default"
+
+
+def _resolve_remote(repo: Optional[str] = None, name: Optional[str] = None, framework: str = "", username: str = ""):
+    """Resolve remote target as (group, repo_name).
+
+    - repo contains '/' → split into (group, repo_name), ignore username
+    - repo without '/' → (username, repo)
+    - repo is None/empty → derive from name+framework using _repo_name logic
+    """
+    if repo:
+        if "/" in repo:
+            parts = repo.split("/", 1)
+            return parts[0], parts[1]
+        return username, repo
+    # No explicit repo → derive from framework + name
+    derived = _repo_name(framework, name or "")
+    return username, derived
+
+
+def _resolve_local_name(name: Optional[str], framework: str, local_dir=None):
+    """Resolve local agent name when --name is omitted.
+
+    Returns (resolved_name, error_message).
+    - If name is given → use it directly.
+    - If omitted → check list_agents():
+      - 0 or only 'default' → use GLOBAL_AGENT_NAME (shared files only)
+      - exactly 1 non-default agent → auto-select it
+      - multiple → return error
+    """
+    if name:
+        return name, None
+
+    # Build a temporary spec to discover agents.
+    spec_cls = ALLOWLIST_REGISTRY[framework]
+    local = Path(local_dir).expanduser() if local_dir else None
+    tmp_spec = spec_cls(agent_name=DEFAULT_AGENT_NAME, local_dir=local)
+    agents = tmp_spec.list_agents()
+
+    # Filter out "default" to find real sub-agents.
+    real_agents = [a for a in agents if a != DEFAULT_AGENT_NAME]
+
+    if len(real_agents) == 0:
+        return GLOBAL_AGENT_NAME, None
+    if len(real_agents) == 1:
+        return real_agents[0], None
+    return None, (
+        f"multiple sub-agents found: {', '.join(agents)}. "
+        f"Please specify --name to select one."
+    )
 
 
 def _frameworks() -> str:
@@ -107,36 +161,51 @@ def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
     return result.merged_files
 
 
+def cmd_list(args) -> int:
+    """List discoverable sub-agents for a framework."""
+    framework = args.framework
+    if framework not in ALLOWLIST_REGISTRY:
+        return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
+
+    spec = _build_allowlist(framework, DEFAULT_AGENT_NAME, getattr(args, 'local_dir', None))
+    agents = spec.list_agents()
+    print(f"Sub-agents for {framework}:")
+    for a in agents:
+        # Show file count for each agent.
+        if a == DEFAULT_AGENT_NAME:
+            tmp = _build_allowlist(framework, GLOBAL_AGENT_NAME, getattr(args, 'local_dir', None))
+        else:
+            tmp = _build_allowlist(framework, a, getattr(args, 'local_dir', None))
+        count = len(tmp.collect_bytes())
+        label = " (global/shared files only)" if a == DEFAULT_AGENT_NAME else ""
+        print(f"  {a} — {count} file(s){label}")
+    return 0
+
+
 def cmd_upload(args) -> int:
     framework = args.framework
     if framework not in ALLOWLIST_REGISTRY:
         return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
 
-    # --list: enumerate discoverable sub-agents and exit (no name required).
-    if args.list:
-        spec = _build_allowlist(framework, args.name or "default", args.local_dir)
-        agents = spec.list_agents()
-        print(f"Sub-agents for {framework}:")
-        for a in agents:
-            print(f"  {a}")
-        return 0
+    # Resolve local agent name (auto-select if only one).
+    local_name, err = _resolve_local_name(args.name, framework, args.local_dir)
+    if err:
+        return _fail(err)
 
-    if not args.name:
-        return _fail("--name is required (the internal sub-agent name)")
-
-    spec = _build_allowlist(framework, args.name, args.local_dir)
+    spec = _build_allowlist(framework, local_name, args.local_dir)
     root = spec.workspace_root
-    resources: Dict[str, str] = spec.collect()
+    resources: Dict[str, bytes] = spec.collect_bytes()
     if not resources:
+        display_name = local_name if local_name != GLOBAL_AGENT_NAME else "global"
         return _fail(
-            f"no files found for {framework}/{args.name} under {root}. "
+            f"no files found for {framework}/{display_name} under {root}. "
             f"Check the path or pass --local_dir."
         )
 
-    total_bytes = sum(len(c.encode("utf-8")) for c in resources.values())
+    total_bytes = sum(len(v) for v in resources.values())
     print(f"Found {len(resources)} file(s) ({total_bytes} bytes) under {root}:")
     for rel in sorted(resources):
-        print(f"  {rel} ({len(resources[rel].encode('utf-8'))} B)")
+        print(f"  {rel} ({len(resources[rel])} B)")
 
     if args.dry_run:
         print("\n[dry-run] nothing uploaded.")
@@ -152,13 +221,22 @@ def cmd_upload(args) -> int:
 
     client = UltronClient(server, token)
 
-    repo = _repo_name(framework, args.name)
+    # Resolve remote target.
+    # Use the resolved local_name for remote derivation (handles auto-select).
+    effective_name = local_name if local_name != GLOBAL_AGENT_NAME else None
+    group, repo = _resolve_remote(
+        repo=getattr(args, 'repo', None),
+        name=effective_name,
+        framework=framework,
+        username=username,
+    )
+
     # Step 1: upload files -> get file_id
     try:
         file_id = client.upload_file(resources)
         # Step 2: create/update agent with file_id
         result = client.create_repo(
-            username, repo, framework,
+            group, repo, framework,
             system_prompt_files=file_id,
         )
     except ApiError as e:
@@ -166,16 +244,16 @@ def cmd_upload(args) -> int:
 
     print(
         f"\nUploaded {len(resources)} file(s) to "
-        f"{username}/{repo}."
+        f"{group}/{repo}."
     )
     return 0
 
 
 def cmd_download(args) -> int:
-    if not args.name:
-        return _fail("--name is required (the repository / sub-agent name)")
+    if not getattr(args, 'repo', None):
+        return _fail("--repo is required for download (the remote repository name)")
     if not args.framework:
-        return _fail("--framework is required for download (to derive repo name)")
+        return _fail("--framework is required for download")
 
     framework = args.framework
     if framework not in ALLOWLIST_REGISTRY:
@@ -189,18 +267,27 @@ def cmd_download(args) -> int:
     if not username:
         return _fail("missing username; run 'ultron login' again.")
 
-    repo = _repo_name(framework, args.name)
+    # Resolve remote target.
+    group, repo = _resolve_remote(
+        repo=args.repo,
+        name=args.name,
+        framework=framework,
+        username=username,
+    )
+
     client = UltronClient(server, token)
     try:
-        info = client.repo_info(username, repo)
+        info = client.repo_info(group, repo)
         if info is None:
-            return _fail(f"repository {username}/{repo} not found.")
-        paths = client.list_repo_files(username, repo)
+            return _fail(f"repository {group}/{repo} not found.")
+        paths = client.list_repo_files(group, repo)
         if not paths:
-            return _fail(f"repository {username}/{repo} has no files.")
-        # List then fetch each file via its download link, one at a time.
+            return _fail(f"repository {group}/{repo} has no files.")
+        # NOTE: downloads as text (str). Binary files (images, etc.) may lose
+        # fidelity when decoded as text. A future binary-aware path is needed
+        # for full parity with upload's collect_bytes.
         resources = {
-            p: client.download_repo_file(username, repo, p) for p in paths
+            p: client.download_repo_file(group, repo, p) for p in paths
         }
     except ApiError as e:
         return _fail(_api_error_message(e, "download"))
@@ -213,17 +300,32 @@ def cmd_download(args) -> int:
         resources = _convert(resources, framework, target_fw)
         print(f"Converted {framework} -> {target_fw} ({len(resources)} file(s)).")
 
-    spec = _build_allowlist(target_fw, args.name, args.local_dir)
+    # Resolve local agent name for writing.
+    local_name = args.name or DEFAULT_AGENT_NAME
+    spec = _build_allowlist(target_fw, local_name, args.local_dir)
     root = spec.workspace_root
-    print(f"{len(resources)} file(s) for {username}/{repo} (framework={target_fw}):")
-    for rel in sorted(resources):
+
+    # Filter downloaded resources by allowlist patterns.
+    patterns = spec.resolved_patterns()
+    filtered = {k: v for k, v in resources.items() if spec.matches(k, patterns)}
+    skipped = set(resources.keys()) - set(filtered.keys())
+    if skipped:
+        print(f"Skipped {len(skipped)} file(s) not matching allowlist:")
+        for s in sorted(skipped):
+            print(f"  [skip] {s}")
+
+    if not filtered:
+        return _fail("no downloaded files match the local allowlist patterns.")
+
+    print(f"{len(filtered)} file(s) for {group}/{repo} (framework={target_fw}):")
+    for rel in sorted(filtered):
         print(f"  {rel} -> {root / rel}")
 
     if args.dry_run:
         print("\n[dry-run] nothing written.")
         return 0
 
-    written = spec.apply(resources)
+    written = spec.apply(filtered)
     print(f"\nWrote {len(written)} file(s) under {root}.")
     return 0
 
@@ -279,8 +381,13 @@ def cmd_watch(args) -> int:
     if framework not in ALLOWLIST_REGISTRY:
         return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
 
-    # Default --name to "all" (full-scope sync).
-    name = args.name or ALL_AGENT_NAME
+    # Resolve local agent name: if --name not given, default to ALL mode.
+    if args.name:
+        local_name, err = _resolve_local_name(args.name, framework, args.local_dir)
+        if err:
+            return _fail(err)
+    else:
+        local_name = ALL_AGENT_NAME
 
     server = config.resolve_server(args.server)
     token = config.resolve_token(args.token)
@@ -296,22 +403,30 @@ def cmd_watch(args) -> int:
         from .watcher import stop_daemon
         stop_daemon()
 
-    spec = _build_allowlist(framework, name, args.local_dir)
+    spec = _build_allowlist(framework, local_name, args.local_dir)
     client = UltronClient(server, token)
 
-    # Guard: file-per-agent frameworks must use --name all for watch.
-    if not spec.supports_individual_watch and name != ALL_AGENT_NAME:
+    # Guard: file-per-agent frameworks with a specific agent name.
+    if (not spec.supports_individual_watch
+            and local_name not in (GLOBAL_AGENT_NAME, ALL_AGENT_NAME, DEFAULT_AGENT_NAME)):
         return _fail(
             f"'{framework}' has shared files across sub-agents; "
-            f"watch only supports '--name all' to avoid sync conflicts. "
-            f"Use 'ultron upload/download -n {name}' for individual sub-agent operations."
+            f"watch only supports global/default mode to avoid sync conflicts. "
+            f"Use 'ultron upload/download -n {local_name}' for individual sub-agent operations."
         )
 
-    repo = _repo_name(framework, name)
+    # Resolve remote target.
+    effective_name = args.name if args.name else None
+    group, repo = _resolve_remote(
+        repo=getattr(args, 'repo', None),
+        name=effective_name,
+        framework=framework,
+        username=username,
+    )
 
     # Guard: check remote repo framework matches local.
     try:
-        info = client.repo_info(username, repo)
+        info = client.repo_info(group, repo)
         if info:
             remote_fw = info.get("Framework") or info.get("framework") or ""
             if remote_fw and remote_fw != framework:
@@ -322,17 +437,17 @@ def cmd_watch(args) -> int:
     except ApiError as e:
         if e.status in (403, 401):
             return _fail(_api_error_message(e, "watch"))
-        pass  # repo not found or unreachable — proceed, first push will create it
+        # repo not found or unreachable — proceed, first push will create it
 
     interval = 120
     push_only = not getattr(args, "pull", False)
-    print(f"Starting sync for {username}/{repo} (interval={interval}s)...")
+    print(f"Starting sync for {group}/{repo} (interval={interval}s)...")
     print(f"  Framework: {framework}")
     print(f"  Root: {spec.workspace_root}")
     if push_only:
-        print(f"  Mode: push-only (local → remote, will NOT pull remote changes)")
+        print(f"  Mode: push-only (local \u2192 remote, will NOT pull remote changes)")
     else:
-        print(f"  Mode: bidirectional (local ↔ remote, WILL pull remote changes to local)")
+        print(f"  Mode: bidirectional (local \u2194 remote, WILL pull remote changes to local)")
     print(f"  Logs: {pid_file().parent / 'logs' / 'watch.log'}")
     print(f"  Stop: ultron stop")
 

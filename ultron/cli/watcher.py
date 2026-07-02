@@ -5,16 +5,18 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from logging.handlers import RotatingFileHandler
 from typing import List, Optional
 
-from .cache import load_sync_state, log_file, pid_file, save_sync_state
+from .cache import load_sync_state, log_file, pid_file, save_sync_state, stop_file
 from .client import ApiError
 from .sync import (
     backup_local,
     detect_local_changes,
     pull_incremental,
+    push_incremental,
     push_resources,
 )
 
@@ -35,34 +37,58 @@ def _get_logger() -> logging.Logger:
     return _logger
 
 
-def watch_loop(spec, client, username: str, name: str, framework: str, interval: int = 120, *, push_only: bool = True):
+def watch_loop(spec, client, username: str, repo: str, framework: str, interval: int = 120, *, push_only: bool = True):
     """Sync loop: push local changes, optionally pull remote changes.
 
-    push_only=True (default): only pushes, never modifies local files.
-    push_only=False: full bidirectional sync (remote wins on conflict).
+    Args:
+        repo: Remote repository name (used as the API path component).
+        push_only: True (default) = only pushes, never modifies local files.
+                   False = full bidirectional sync (remote wins on conflict).
     """
     logger = _get_logger()
     logger.info("Watch started for %s/%s (root=%s, interval=%ds, push_only=%s)",
-                username, name, spec.workspace_root, interval, push_only)
+                username, repo, spec.workspace_root, interval, push_only)
 
-    state = load_sync_state(name)
+    state = load_sync_state(repo)
     running = True
+    stop_event = threading.Event()
+    sf = stop_file()
 
     def _handle_term(signum, frame):
         nonlocal running
         running = False
+        stop_event.set()
 
-    signal.signal(signal.SIGTERM, _handle_term)
+    # Unix: register signal handlers for graceful stop via kill(1).
+    # Windows: SIGTERM triggers TerminateProcess (hard kill), so signals are
+    # unreliable; the stop-file mechanism below is the primary channel.
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _handle_term)
     signal.signal(signal.SIGINT, _handle_term)
 
+    # Remove any stale stop file from a previous session.
+    sf.unlink(missing_ok=True)
+
     while running:
-        time.sleep(interval)
+        # Wait with periodic wake-ups to poll the stop file (Windows compat).
+        # On Unix, the signal handler sets stop_event immediately.
+        elapsed = 0
+        poll_interval = min(interval, 5)  # check stop file every 5s
+        while elapsed < interval and running:
+            stop_event.wait(timeout=poll_interval)
+            if stop_event.is_set():
+                running = False
+                break
+            if sf.exists():
+                running = False
+                break
+            elapsed += poll_interval
         if not running:
             break
 
         # ---- Fetch remote file list ----
         try:
-            remote_files = client.list_repo_files_detail(username, name)
+            remote_files = client.list_repo_files_detail(username, repo)
         except ApiError as e:
             if e.status in (404, 500):
                 remote_files = []
@@ -71,7 +97,7 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
                 continue
 
         # ---- Collect local resources & detect changes ----
-        local_resources = spec.collect()
+        local_resources = spec.collect_bytes()
         scope = set(local_resources.keys()) | set(state.get("remote_files", {}).keys())
         remote_sha_map = {f.path: f.sha256 for f in remote_files if f.path in scope}
 
@@ -86,35 +112,60 @@ def watch_loop(spec, client, username: str, name: str, framework: str, interval:
         try:
             did_sync = _sync_action(
                 push_only, remote_changed, local_changed,
-                client, username, name, framework, spec,
+                client, username, repo, framework, spec,
                 remote_files, local_resources, logger,
+                state,
             )
         except Exception as exc:
             logger.error("Sync failed (will retry): %s", exc)
 
         # ---- Update baseline on successful sync ----
         if did_sync:
-            _refresh_baseline(client, username, name, spec, state, logger)
-            save_sync_state(name, state["last_commit_date"], state["remote_files"])
+            # After a pull, local files may have changed — re-collect.
+            if not push_only:
+                local_resources = spec.collect_bytes()
+            _refresh_baseline(client, username, repo, local_resources, state, logger)
+            save_sync_state(repo, state["last_commit_date"], state["remote_files"])
 
     logger.info("Watch stopped (signal received).")
     pf = pid_file()
     if pf.exists():
         pf.unlink(missing_ok=True)
+    sf.unlink(missing_ok=True)
+
+
+def _push_local(client, username, name, framework, local_resources, state, logger) -> bool:
+    """Push local changes: full upload on first time, incremental thereafter.
+
+    Returns True if something was actually pushed, False otherwise.
+    """
+    if not local_resources:
+        logger.debug("No local resources to push — skipping.")
+        return False
+    if not state.get("remote_files"):
+        push_resources(client, username, name, framework, local_resources)
+        logger.info("Pushed local changes (full upload — first time).")
+        return True
+    else:
+        changed = detect_local_changes(local_resources, state["remote_files"])
+        if changed:
+            push_incremental(client, username, name, changed, set(state["remote_files"].keys()))
+            logger.info("Pushed local changes (incremental commit).")
+            return True
+        return False
 
 
 def _sync_action(
     push_only, remote_changed, local_changed,
     client, username, name, framework, spec,
     remote_files, local_resources, logger,
+    state,
 ) -> bool:
     """Execute the appropriate sync action. Returns True if something changed."""
     if push_only:
         if not local_changed:
             return False
-        push_resources(client, username, name, framework, local_resources)
-        logger.info("Pushed local changes.")
-        return True
+        return _push_local(client, username, name, framework, local_resources, state, logger)
 
     if remote_changed and local_changed:
         backup_path = backup_local(spec, name)
@@ -125,19 +176,22 @@ def _sync_action(
         pull_incremental(client, username, name, spec, remote_files, local_resources)
         logger.info("Pulled remote changes (backup: %s).", backup_path)
     elif local_changed:
-        push_resources(client, username, name, framework, local_resources)
-        logger.info("Pushed local changes.")
+        _push_local(client, username, name, framework, local_resources, state, logger)
     else:
         return False
     return True
 
 
-def _refresh_baseline(client, username: str, name: str, spec, state: dict, logger) -> None:
-    """Re-fetch remote file list and update state in-place."""
+def _refresh_baseline(client, username: str, name: str, local_resources: dict, state: dict, logger) -> None:
+    """Re-fetch remote file list and update state in-place.
+
+    Uses *local_resources* keys as the managed-file scope to avoid a redundant
+    disk scan (caller already collected them this cycle).
+    """
+    managed = set(local_resources.keys())
     for attempt in range(3):
         try:
             fresh = client.list_repo_files_detail(username, name)
-            managed = set(spec.collect().keys())
             state["last_commit_date"] = max((f.committed_date for f in fresh), default=0)
             state["remote_files"] = {f.path: f.sha256 for f in fresh if f.path in managed}
             return
@@ -207,12 +261,19 @@ def _daemonize_windows(target, *args, **kwargs):
     import tempfile
 
     # Serialize the arguments that watch_loop needs.
+    # spec (args[0]) carries the agent_name used to build the allowlist scope.
+    # client (args[1]) carries server/token for the child process.
+    spec_obj = args[0] if len(args) > 0 else None
+    client_obj = args[1] if len(args) > 1 else None
     payload = {
         "username": args[2] if len(args) > 2 else kwargs.get("username", ""),
-        "name": args[3] if len(args) > 3 else kwargs.get("name", ""),
+        "repo": args[3] if len(args) > 3 else kwargs.get("repo", ""),
         "framework": args[4] if len(args) > 4 else kwargs.get("framework", ""),
         "interval": args[5] if len(args) > 5 else kwargs.get("interval", 120),
         "push_only": kwargs.get("push_only", True),
+        "local_name": getattr(spec_obj, "agent_name", "") if spec_obj else "",
+        "server": getattr(client_obj, "server", "") if client_obj else "",
+        "token": getattr(client_obj, "token", "") if client_obj else "",
         # spec and client are rebuilt in the child from stored config.
     }
     # Write to a temp file that the child will read and delete.
@@ -236,30 +297,45 @@ def _daemonize_windows(target, *args, **kwargs):
     pf.write_text(str(proc.pid), encoding="utf-8")
 
 
-def stop_daemon() -> bool:
-    """Stop ALL running watch daemon processes.
+_DEFAULT_WATCH_PATTERNS = [
+    "ultron watch --framework",
+]
 
-    Kills the PID-file-tracked process, then scans for orphaned processes.
-    Waits briefly for graceful shutdown before returning.
+
+def stop_daemon(extra_patterns: Optional[List[str]] = None) -> bool:
+    """Stop ALL running watch daemon processes (cross-platform).
+
+    Primary mechanism: write a stop-file that the watch loop polls.
+    Secondary: send SIGTERM (Unix) or taskkill (Windows) as a backup.
+    Cleans up PID file and stop file on return.
     """
     stopped = False
     pf = pid_file()
+    sf = stop_file()
 
-    # 1. Kill PID-file-tracked process.
+    # 1. Write the stop file — the watch loop will notice within 5 seconds.
+    sf.write_text("stop", encoding="utf-8")
+
+    # 2. Also send SIGTERM to PID-tracked process (Unix only).
+    # On Windows, os.kill(SIGTERM) = TerminateProcess (hard kill), which
+    # bypasses graceful shutdown entirely.  Rely on stop-file instead.
     tracked_pid = None
     if pf.exists():
         try:
             tracked_pid = int(pf.read_text().strip())
-            os.kill(tracked_pid, signal.SIGTERM)
+            if hasattr(os, "fork"):
+                # Unix: SIGTERM triggers the handler → sets running=False.
+                os.kill(tracked_pid, signal.SIGTERM)
+            # On Windows, the stop file (written above) is the sole signal.
             stopped = True
         except (ValueError, OSError, ProcessLookupError):
             tracked_pid = None
-        pf.unlink(missing_ok=True)
 
-    # 2. Kill orphaned watch processes (Unix only; pgrep unavailable on Windows).
+    # 3. Kill orphaned watch processes.
     if hasattr(os, "fork"):
+        # Unix: use pgrep.
         my_pid = os.getpid()
-        for found_pid in _find_watch_pids():
+        for found_pid in _find_watch_pids(extra_patterns):
             if found_pid in (my_pid, tracked_pid):
                 continue
             try:
@@ -267,23 +343,118 @@ def stop_daemon() -> bool:
                 stopped = True
             except (ProcessLookupError, PermissionError):
                 pass
+    else:
+        # Windows: use wmic/tasklist to find orphaned processes.
+        for found_pid in _find_watch_pids_windows(extra_patterns):
+            if found_pid == tracked_pid:
+                continue
+            _terminate_pid_windows(found_pid)
+            stopped = True
 
-    # 3. Wait for processes to exit (up to 3s).
-    if stopped:
-        time.sleep(1)
+    # 4. Wait for graceful exit (stop-file polling interval is 5s max).
+    if stopped or tracked_pid:
+        _wait_for_exit(tracked_pid, timeout=8)
 
-    return stopped
+    # 5. Force kill if still alive.
+    if tracked_pid and _is_alive(tracked_pid):
+        _force_kill(tracked_pid)
+
+    # 6. Clean up.
+    pf.unlink(missing_ok=True)
+    sf.unlink(missing_ok=True)
+
+    return stopped or tracked_pid is not None
 
 
-def _find_watch_pids() -> List[int]:
-    """Find PIDs of running 'ultron watch' daemon processes via pgrep."""
+def _find_watch_pids(extra_patterns: Optional[List[str]] = None) -> List[int]:
+    """Find PIDs of running watch daemon processes via pgrep (Unix only).
+
+    Searches default patterns plus any *extra_patterns* provided by the caller.
+    """
+    patterns = list(dict.fromkeys(_DEFAULT_WATCH_PATTERNS + (extra_patterns or [])))
+    pids: set = set()
+    for pattern in patterns:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", "--", pattern],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                for p in result.stdout.strip().split("\n"):
+                    if p.strip().isdigit():
+                        pids.add(int(p.strip()))
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            pass
+    return list(pids)
+
+
+def _find_watch_pids_windows(extra_patterns: Optional[List[str]] = None) -> List[int]:
+    """Find PIDs of running watch daemon processes on Windows via wmic/tasklist.
+
+    Searches for python processes whose command line matches watch patterns.
+    """
+    patterns = list(dict.fromkeys(_DEFAULT_WATCH_PATTERNS + (extra_patterns or [])))
+    pids: set = set()
     try:
+        # Use wmic to get process command lines.
         result = subprocess.run(
-            ["pgrep", "-f", "ultron watch --framework"],
-            capture_output=True, text=True, timeout=5,
+            ["wmic", "process", "where", "name like '%python%'",
+             "get", "processid,commandline"],
+            capture_output=True, text=True, timeout=10,
         )
-        if result.returncode == 0:
-            return [int(p) for p in result.stdout.strip().split("\n") if p.strip().isdigit()]
+        if result.returncode != 0:
+            return []
+        for line in result.stdout.splitlines():
+            line_lower = line.lower()
+            for pattern in patterns:
+                if pattern.lower() in line_lower:
+                    # Extract PID (last number on the line).
+                    parts = line.strip().split()
+                    if parts and parts[-1].isdigit():
+                        pids.add(int(parts[-1]))
+                    break
     except (OSError, subprocess.TimeoutExpired, ValueError):
         pass
-    return []
+    return list(pids)
+
+
+def _terminate_pid_windows(pid: int) -> None:
+    """Terminate a process on Windows using taskkill."""
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"],
+            capture_output=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _is_alive(pid: int) -> bool:
+    """Check if a process with the given PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+def _wait_for_exit(pid: Optional[int], timeout: int = 8) -> None:
+    """Wait up to *timeout* seconds for a process to exit."""
+    if pid is None:
+        time.sleep(2)
+        return
+    for _ in range(timeout * 2):  # check every 0.5s
+        if not _is_alive(pid):
+            return
+        time.sleep(0.5)
+
+
+def _force_kill(pid: int) -> None:
+    """Force-kill a process (SIGKILL on Unix, taskkill /F on Windows)."""
+    if hasattr(os, "fork"):
+        try:
+            os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    else:
+        _terminate_pid_windows(pid)

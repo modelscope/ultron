@@ -1,12 +1,13 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 """Core sync logic: backup, zip, bidirectional sync helpers."""
+import base64
 import hashlib
 import io
 import logging
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, List, Union
 
 from .cache import cache_dir
 
@@ -17,7 +18,7 @@ logger = logging.getLogger("ultron.watch")
 
 
 
-def zip_resources(resources: Dict[str, str], wrapper: str = "agent") -> bytes:
+def zip_resources(resources: Dict[str, Union[str, bytes]], wrapper: str = "agent") -> bytes:
     """Pack resources into a deterministic in-memory zip.
 
     The server always strips the first directory level from zip entries, so we
@@ -25,10 +26,8 @@ def zip_resources(resources: Dict[str, str], wrapper: str = "agent") -> bytes:
     after stripping, the remaining path matches the original ``rel_path``.
 
     Args:
-        resources: A dict {rel_path: content_or_filepath}. If a value is a
-                   short string that points to an existing file on disk, its
-                   content is read; otherwise the value is treated as literal
-                   text content.
+        resources: A dict {rel_path: content}. Values are written directly
+                   via ``ZipFile.writestr`` (accepts both str and bytes).
         wrapper: Name of the top-level wrapper directory (default: "agent").
     """
     buf = io.BytesIO()
@@ -43,7 +42,7 @@ def backup_local(spec, name: str) -> Path:
 
     Returns the path to the created zip file.
     """
-    resources: Dict[str, str] = spec.collect()
+    resources: Dict[str, bytes] = spec.collect_bytes()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_path = cache_dir() / f"{name}_{timestamp}.zip"
     zip_path.write_bytes(zip_resources(resources))
@@ -53,22 +52,24 @@ def backup_local(spec, name: str) -> Path:
 
 # ---- Bidirectional sync helpers ----
 
-def sha256_content(content: str) -> str:
-    """Compute sha256 of text content (utf-8 encoded, no BOM)."""
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+def sha256_content(content: Union[str, bytes]) -> str:
+    """Compute sha256 of content (accepts str or bytes)."""
+    if isinstance(content, str):
+        content = content.encode("utf-8")
+    return hashlib.sha256(content).hexdigest()
 
 
 def detect_local_changes(
-    local_resources: Dict[str, str],
+    local_resources: Dict[str, bytes],
     baseline_sha256: Dict[str, str],
-) -> Dict[str, str]:
+) -> Dict[str, Union[bytes, None]]:
     """Compare local files against the sync baseline sha256 map.
 
     Returns a dict of files that differ:
-      - key present with non-empty value: content changed or file is new locally
-      - key present with empty string value: file was deleted locally (in baseline but not local)
+      - key present with bytes value: content changed or file is new locally
+      - key present with None value: file was deleted locally (in baseline but not local)
     """
-    changed: Dict[str, str] = {}
+    changed: Dict[str, Union[bytes, None]] = {}
     # Modified or new files.
     for rel, content in local_resources.items():
         local_sha = sha256_content(content)
@@ -77,7 +78,7 @@ def detect_local_changes(
     # Deleted files (in baseline but not in local).
     for rel in baseline_sha256:
         if rel not in local_resources:
-            changed[rel] = ""
+            changed[rel] = None
     return changed
 
 
@@ -86,16 +87,58 @@ def push_resources(
     username: str,
     name: str,
     framework: str,
-    resources: Dict[str, str],
+    resources: Dict[str, bytes],
 ) -> None:
-    """Zip, upload, and create/update the remote agent repo.
+    """Full upload via two-step OSS, then create/update agent repo.
 
     Raises on failure (caller should NOT update baseline on exception).
+    Does nothing if *resources* is empty.
     """
-    zip_bytes = zip_resources(resources)
-    file_id = client.upload_file(zip_bytes)
-    client.create_repo(username, name, framework, system_prompt_files=file_id)
-    logger.info("Pushed %d file(s) (%d bytes zip).", len(resources), len(zip_bytes))
+    if not resources:
+        logger.warning("push_resources called with empty resources; skipping.")
+        return
+    gid = client.upload_file(resources)
+    if not gid:
+        logger.warning("upload_file returned empty gid; skipping create_repo.")
+        return
+    client.create_repo(username, name, framework, system_prompt_files=gid)
+    for rel in sorted(resources):
+        logger.info("  UPLOAD: %s (%d B)", rel, len(resources[rel]))
+    logger.info("Pushed %d file(s) via OSS (gid=%s).", len(resources), gid)
+
+
+def push_incremental(
+    client: "UltronClient",
+    username: str,
+    name: str,
+    changed: Dict[str, Union[bytes, None]],
+    remote_paths: set,
+) -> None:
+    """Incremental push via commit interface.
+
+    Builds create/update/delete actions and commits in one request.
+    Raises on failure (caller should NOT update baseline on exception).
+    """
+    actions: List[dict] = []
+    for fpath, content in changed.items():
+        if content is None:  # None = delete
+            actions.append({"action": "delete", "file_path": fpath})
+        else:
+            action_type = "update" if fpath in remote_paths else "create"
+            # Try UTF-8 decode; fall back to base64 for binary.
+            try:
+                text = content.decode("utf-8")
+                actions.append({"action": action_type, "file_path": fpath,
+                                "content": text, "encoding": "text"})
+            except UnicodeDecodeError:
+                b64 = base64.b64encode(content).decode("ascii")
+                actions.append({"action": action_type, "file_path": fpath,
+                                "content": b64, "encoding": "base64"})
+    if actions:
+        for a in actions:
+            logger.info("  %s: %s", a["action"].upper(), a["file_path"])
+        client.commit_files(username, name, actions, commit_message="watch sync")
+        logger.info("Committed %d action(s) incrementally.", len(actions))
 
 
 def pull_incremental(
@@ -104,7 +147,7 @@ def pull_incremental(
     name: str,
     spec,
     remote_files: "List[RemoteFileInfo]",
-    local_resources: Dict[str, str],
+    local_resources: Dict[str, bytes],
 ) -> int:
     """Incrementally pull remote changes to local workspace.
 
@@ -116,6 +159,7 @@ def pull_incremental(
     (caller should NOT update baseline on exception).
     """
     root: Path = spec.workspace_root
+    resolved_root = root.resolve()
     remote_sha_map = {f.path: f.sha256 for f in remote_files}
     remote_paths = set(remote_sha_map.keys())
     local_paths = set(local_resources.keys())
@@ -123,22 +167,27 @@ def pull_incremental(
 
     # Download files that are new or changed on remote.
     for rfile in remote_files:
+        target = (root / rfile.path).resolve()
+        if not target.is_relative_to(resolved_root):
+            logger.warning("  Skipped (path traversal): %s", rfile.path)
+            continue
         local_content = local_resources.get(rfile.path)
         if local_content is not None:
             local_sha = sha256_content(local_content)
             if local_sha == rfile.sha256:
                 continue  # identical, skip
         # Need to download.
-        content = client.download_repo_file(username, name, rfile.path)
-        target = root / rfile.path
+        content = client.download_repo_file(username, name, rfile.path, binary=True)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        target.write_bytes(content)
         changes += 1
         logger.info("  Downloaded: %s", rfile.path)
 
     # Delete local files that no longer exist on remote.
     for rel in sorted(local_paths - remote_paths):
-        target = root / rel
+        target = (root / rel).resolve()
+        if not target.is_relative_to(resolved_root):
+            continue
         if target.exists():
             target.unlink()
             changes += 1

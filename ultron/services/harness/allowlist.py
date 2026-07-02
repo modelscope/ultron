@@ -32,7 +32,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ MAX_FILE_SIZE = 1 * 1024 * 1024  # 1 MB
 
 DEFAULT_AGENT_NAME = "default"
 ALL_AGENT_NAME = "all"
+GLOBAL_AGENT_NAME = "__global__"
 
 
 class ClawWorkspaceAllowlist(ABC):
@@ -118,23 +119,39 @@ class ClawWorkspaceAllowlist(ABC):
         """Effective root: ``local_dir`` override, else the product default."""
         return self._local_dir if self._local_dir is not None else self.default_workspace_root
 
-    def _resolved_patterns(self) -> List[str]:
+    def _is_global(self) -> bool:
+        """Whether we are in global-only mode (shared files only, no sub-agent)."""
+        return self.agent_name == GLOBAL_AGENT_NAME
+
+    def resolved_patterns(self) -> List[str]:
+        """Resolve glob patterns for the current agent mode.
+
+        Convention: In global mode (``GLOBAL_AGENT_NAME``), patterns containing
+        the ``{name}`` placeholder are excluded because they target specific
+        sub-agents.  Shared/framework-level patterns (those without ``{name}``)
+        remain.  New frameworks MUST follow this convention: use ``{name}`` in
+        patterns that are per-agent and omit it for shared/global patterns.
+        """
+        if self._is_global():
+            # Global mode: exclude patterns containing {name} placeholder.
+            return [p for p in self._effective_patterns() if "{name}" not in p]
         name = "*" if self._is_all() else self.agent_name
         return [p.format(name=name) for p in self._effective_patterns()]
 
-    def _matches(self, rel_path: str, patterns: List[str]) -> bool:
+    def matches(self, rel_path: str, patterns: List[str]) -> bool:
+        """Return True if *rel_path* matches any of the given glob *patterns*."""
         for pattern in patterns:
             if fnmatch.fnmatch(rel_path, pattern):
                 return True
         return False
 
-    def collect(self) -> Dict[str, str]:
-        """Gather allowed workspace files as {relative_path: text_content}."""
+    def _walk_matched(self) -> List[Tuple[str, Path]]:
+        """Walk workspace and return (rel_path, Path) for matched files."""
         root = self.workspace_root
         if not root.is_dir():
-            return {}
-        patterns = self._resolved_patterns()
-        result: Dict[str, str] = {}
+            return []
+        patterns = self.resolved_patterns()
+        matched: List[Tuple[str, Path]] = []
         for dirpath, dirnames, filenames in os.walk(root):
             # Skip hidden directories in-place (prevents descending into them).
             dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
@@ -148,14 +165,38 @@ class ClawWorkspaceAllowlist(ABC):
                     rel = f.relative_to(root).as_posix()
                 except ValueError:
                     continue
-                if not self._matches(rel, patterns):
+                if not self.matches(rel, patterns):
                     continue
                 try:
                     if f.stat().st_size > MAX_FILE_SIZE:
                         continue
-                    result[rel] = f.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError) as e:
-                    logger.debug("Skip %s: %s", f, e)
+                except OSError:
+                    continue
+                matched.append((rel, f))
+        return matched
+
+    def collect(self) -> Dict[str, str]:
+        """Gather allowed workspace files as {relative_path: text_content}."""
+        result: Dict[str, str] = {}
+        for rel, f in self._walk_matched():
+            try:
+                result[rel] = f.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as e:
+                logger.warning("Skip %s: %s", f, e)
+        return result
+
+    def collect_bytes(self) -> Dict[str, bytes]:
+        """Gather allowed workspace files as {relative_path: raw_bytes}.
+
+        Unlike :meth:`collect`, this includes binary files (images, PDFs, etc.)
+        and does not skip on UnicodeDecodeError.
+        """
+        result: Dict[str, bytes] = {}
+        for rel, f in self._walk_matched():
+            try:
+                result[rel] = f.read_bytes()
+            except OSError as e:
+                logger.warning("Skip %s: %s", f, e)
         return result
 
     def list_agents(self) -> List[str]:
@@ -166,13 +207,20 @@ class ClawWorkspaceAllowlist(ABC):
         """
         return [DEFAULT_AGENT_NAME]
 
+    def _list_agents_from_dir(self, agents_dir: Path) -> List[str]:
+        """List agents from a directory, prepending DEFAULT if not present."""
+        agents = _list_agent_files(agents_dir)
+        if DEFAULT_AGENT_NAME not in agents:
+            agents = [DEFAULT_AGENT_NAME] + agents
+        return agents
+
     def apply(self, resources: Dict[str, str]) -> List[str]:
         """Write resource files back to the workspace. Returns list of written paths."""
         root = self.workspace_root.resolve()
         written: List[str] = []
         for rel_path, content in resources.items():
             target = (root / rel_path).resolve()
-            if not str(target).startswith(str(root)):
+            if not target.is_relative_to(root):
                 logger.warning("Path traversal blocked: %s", rel_path)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -216,7 +264,7 @@ class NanobotWorkspaceAllowlist(ClawWorkspaceAllowlist):
         ]
 
     def list_agents(self) -> List[str]:
-        return _list_agent_files(self.workspace_root / "agents")
+        return self._list_agents_from_dir(self.workspace_root / "agents")
 
 
 class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
@@ -423,7 +471,7 @@ class QoderWorkspaceAllowlist(ClawWorkspaceAllowlist):
         ]
 
     def list_agents(self) -> List[str]:
-        return _list_agent_files(self.workspace_root / "agents")
+        return self._list_agents_from_dir(self.workspace_root / "agents")
 
 
 def _list_agent_files(agents_dir: Path) -> List[str]:
