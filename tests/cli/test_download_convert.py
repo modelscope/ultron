@@ -153,7 +153,7 @@ class TestConvert(unittest.TestCase):
     def test_convert_local_nanobot_to_hermes(self):
         rc = _run([
             "convert", "--from", "nanobot", "--to", "hermes",
-            "--local_dir", str(self.src), "--out", str(self.out),
+            "--local_dir", str(self.src), "--out-dir", str(self.out),
         ])
         self.assertEqual(rc, 0)
         self.assertTrue((self.out / "SOUL.md").is_file())
@@ -163,7 +163,7 @@ class TestConvert(unittest.TestCase):
     def test_convert_dry_run_writes_nothing(self):
         rc = _run([
             "convert", "--from", "nanobot", "--to", "hermes",
-            "--local_dir", str(self.src), "--out", str(self.out), "--dry-run",
+            "--local_dir", str(self.src), "--out-dir", str(self.out), "--dry-run",
         ])
         self.assertEqual(rc, 0)
         self.assertFalse(self.out.exists())

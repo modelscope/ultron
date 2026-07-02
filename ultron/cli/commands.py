@@ -405,7 +405,7 @@ def cmd_convert(args) -> int:
 
     name = args.name or "default"
     src_spec = _build_allowlist(source_fw, name, args.local_dir)
-    dst_spec = _build_allowlist(target_fw, name, args.out)
+    dst_spec = _build_allowlist(target_fw, name, args.out_dir)
     return convert_workspace(src_spec, source_fw, target_fw, dst_spec, dry_run=args.dry_run)
 
 
@@ -561,6 +561,19 @@ def cmd_recover(args) -> int:
     target = args.target
     if not target:
         return _fail("specify a target: 'last' or a backup filename. Use --list to see available backups.")
+
+    # Filter backups by framework/name if provided
+    fw_filter = getattr(args, 'framework', None)
+    name_filter = getattr(args, 'name', None)
+    if fw_filter or name_filter:
+        filtered = []
+        for f in backups:
+            if fw_filter and not f.stem.startswith(fw_filter):
+                continue
+            if name_filter and f"_{name_filter}_" not in f.stem:
+                continue
+            filtered.append(f)
+        backups = filtered
 
     # Resolve target to a zip path
     if target == "last":

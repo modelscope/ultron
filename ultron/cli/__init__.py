@@ -111,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Source workspace root to read (default: source framework's path).",
     )
     p_cv.add_argument(
-        "--out", "-o",
+        "--out-dir", "-o",
         help="Destination directory to write (default: target framework's path).",
     )
     p_cv.add_argument(
