@@ -169,16 +169,11 @@ def cmd_status(args) -> int:
 
     spec = _build_allowlist(framework, DEFAULT_AGENT_NAME, getattr(args, 'local_dir', None))
     agents = spec.list_agents()
-    print(f"Sub-agents for {framework}:")
+    print(f"Agents for {framework}:")
     for a in agents:
-        # Show file count for each agent.
-        if a == DEFAULT_AGENT_NAME:
-            tmp = _build_allowlist(framework, GLOBAL_AGENT_NAME, getattr(args, 'local_dir', None))
-        else:
-            tmp = _build_allowlist(framework, a, getattr(args, 'local_dir', None))
+        tmp = _build_allowlist(framework, a, getattr(args, 'local_dir', None))
         count = len(tmp.collect_bytes())
-        label = " (global/shared files only)" if a == DEFAULT_AGENT_NAME else ""
-        print(f"  {a} — {count} file(s){label}")
+        print(f"  {a} — {count} file(s)")
     return 0
 
 
