@@ -34,7 +34,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from ultron.cli.client import ApiError, UltronClient
-from ultron.cli.commands import cmd_download, cmd_list, cmd_upload, _repo_name
+from ultron.cli.commands import cmd_download, cmd_status, cmd_upload, _repo_name
 from ultron.cli import config as cli_config
 from ultron.services.harness.allowlist import (
     ALL_AGENT_NAME,
@@ -280,11 +280,11 @@ class TestUploadDownload(unittest.TestCase):
     # 06. List: list sub-agents
     # -----------------------------------------------------------------------
     def test_06_upload_list(self):
-        """cmd_list should enumerate sub-agents on disk and return 0."""
+        """cmd_status should enumerate sub-agents on disk and return 0."""
         local = self._create_local_workspace(QODER_ALL_FILES)
         try:
             args = SimpleNamespace(framework="qoder", local_dir=local)
-            rc = cmd_list(args)
+            rc = cmd_status(args)
             self.assertEqual(rc, 0)
         finally:
             self._cleanup_dir(local)

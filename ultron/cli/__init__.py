@@ -10,7 +10,7 @@ Subcommands:
 import argparse
 import sys
 
-from .commands import cmd_convert, cmd_download, cmd_list, cmd_login, cmd_recover, cmd_stop, cmd_upload, cmd_watch
+from .commands import cmd_convert, cmd_download, cmd_login, cmd_recover, cmd_status, cmd_stop, cmd_upload, cmd_watch
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -120,17 +120,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_cv.set_defaults(func=cmd_convert)
 
-    # ---- list ----
-    p_list = sub.add_parser(
-        "list",
-        help="List discoverable sub-agents for a framework.",
+    # ---- status ----
+    p_status = sub.add_parser(
+        "status",
+        help="Show local agent status for a framework.",
     )
-    p_list.add_argument(
+    p_status.add_argument(
         "--framework", "-f", required=True,
         help="Agent framework / bot type.",
     )
-    p_list.add_argument("--local_dir", "-d", help="Override workspace root.")
-    p_list.set_defaults(func=cmd_list)
+    p_status.add_argument("--local_dir", "-d", help="Override workspace root.")
+    p_status.set_defaults(func=cmd_status)
+
+    # ---- backups ----
+    p_backups = sub.add_parser(
+        "backups",
+        help="List available backups.",
+    )
+    p_backups.add_argument("--framework", "-f", help="Filter by framework.")
+    p_backups.add_argument("--name", "-n", help="Filter by agent name.")
+    p_backups.add_argument("--local_dir", "-d", help="Override workspace root.")
+    p_backups.set_defaults(func=cmd_recover, target=None, list=True)
 
     # ---- watch ----
     p_watch = sub.add_parser(

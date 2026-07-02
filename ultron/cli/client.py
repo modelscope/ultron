@@ -65,7 +65,7 @@ class UltronClient:
             data = self._openapi.get_current_user()
         except HubError as exc:
             raise _wrap(exc) from exc
-        return data.get("username", data.get("Username", ""))
+        return data.get("username") or data.get("Username") or ""
 
     # ---- repository ----
 
@@ -96,27 +96,12 @@ class UltronClient:
                 "GET", "/agents", params=params, require_token=False)
         except HubError as exc:
             raise _wrap(exc) from exc
-        # Normalize response: server may return {Data: [...], Total: N}
-        # or {items: [...], total_count: N}.
-        if isinstance(data, dict):
-            items = None
-            for key in ("Data", "items", "data"):
-                if key in data:
-                    items = data[key]
-                    break
-            if items is None:
-                items = []
-            total = data.get("Total")
-            if total is None:
-                total = data.get("total_count")
-            if total is None:
-                total = data.get("TotalCount")
-            if total is None:
-                total = len(items)
-            return {"items": items, "total_count": total}
-        # If response is a list directly
         if isinstance(data, list):
             return {"items": data, "total_count": len(data)}
+        if isinstance(data, dict):
+            items = data.get("Data") or []
+            total = data.get("Total") or data.get("TotalCount") or len(items)
+            return {"items": items, "total_count": total}
         return {"items": [], "total_count": 0}
 
     def create_repo(
@@ -188,7 +173,7 @@ class UltronClient:
 
             raw = []
             if isinstance(data, dict):
-                raw = data.get("trees") or data.get("Trees") or []
+                raw = data.get("Trees") or data.get("trees") or []
             elif isinstance(data, list):
                 raw = data
 
@@ -196,10 +181,10 @@ class UltronClient:
                 if not isinstance(item, dict):
                     continue
                 all_entries.append({
-                    "path": item.get("path") or item.get("Path") or "",
-                    "type": item.get("type") or item.get("Type") or "",
-                    "sha256": item.get("sha256") or item.get("Sha256") or "",
-                    "committed_date": item.get("committed_date") or item.get("Committed_date") or 0,
+                    "path": item.get("Path") or item.get("path") or "",
+                    "type": item.get("Type") or item.get("type") or "",
+                    "sha256": item.get("Sha256") or item.get("sha256") or "",
+                    "committed_date": item.get("Committed_date") or item.get("committed_date") or 0,
                 })
 
             if len(raw) < page_size:

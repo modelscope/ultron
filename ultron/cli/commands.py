@@ -161,7 +161,7 @@ def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
     return result.merged_files
 
 
-def cmd_list(args) -> int:
+def cmd_status(args) -> int:
     """List discoverable sub-agents for a framework."""
     framework = args.framework
     if framework not in ALLOWLIST_REGISTRY:
@@ -330,6 +330,74 @@ def cmd_download(args) -> int:
     return 0
 
 
+def convert_workspace(
+    src_spec, source_fw: str, target_fw: str, dst_spec, dry_run: bool = False
+) -> int:
+    """Shared convert logic: merge → filter defaults → backup → write.
+
+    Returns 0 on success, 1 on failure.
+    """
+    src_root = src_spec.workspace_root
+    resources = src_spec.collect()
+    if not resources:
+        return _fail(
+            f"no {source_fw} files found under {src_root}."
+        )
+
+    # Convert via merge_resources to get full action details
+    if source_fw == target_fw:
+        converted = resources
+        default_paths = set()
+    else:
+        result = merge_resources(
+            incoming=resources,
+            source_product=source_fw,
+            target_product=target_fw,
+            source_defaults=get_defaults(source_fw),
+            target_defaults=get_defaults(target_fw),
+        )
+        default_paths = {
+            a.path for a in result.actions if a.action == 'default'
+        }
+        converted = result.merged_files
+
+    dst_root = dst_spec.workspace_root
+
+    # Filter out default-only files: don't create or overwrite with empty templates
+    effective = {k: v for k, v in converted.items() if k not in default_paths}
+    skipped_defaults = sorted(default_paths & set(converted.keys()))
+
+    print(
+        f"Convert {source_fw}/{src_spec.agent_name} ({src_root}) -> "
+        f"{target_fw}/{dst_spec.agent_name} ({dst_root}): "
+        f"{len(resources)} in, {len(effective)} out"
+    )
+    for rel in sorted(effective):
+        print(f"  {rel} -> {dst_root / rel}")
+    if skipped_defaults:
+        print(f"  ({len(skipped_defaults)} default template(s) skipped: "
+              f"{', '.join(skipped_defaults)})")
+
+    if dry_run:
+        print("\n[dry-run] nothing written.")
+        return 0
+
+    if not effective:
+        print("\nNo effective files to write (all were default templates).")
+        return 0
+
+    # Backup existing target files before overwriting
+    from .sync import backup_local
+    existing = dst_spec.collect()
+    if existing:
+        backup_path = backup_local(dst_spec, f"{target_fw}_{dst_spec.agent_name}")
+        print(f"  Backup: {backup_path}")
+
+    written = dst_spec.apply(effective)
+    print(f"\nWrote {len(written)} file(s) under {dst_root}.")
+    return 0
+
+
 def cmd_convert(args) -> int:
     """Local-only format conversion: read a workspace, convert, write it out."""
     source_fw = args.source
@@ -340,36 +408,8 @@ def cmd_convert(args) -> int:
 
     name = args.name or "default"
     src_spec = _build_allowlist(source_fw, name, args.local_dir)
-    src_root = src_spec.workspace_root
-    resources = src_spec.collect()
-    if not resources:
-        return _fail(
-            f"no {source_fw} files found under {src_root}. Check the path or pass --local_dir."
-        )
-
-    converted = _convert(resources, source_fw, target_fw)
-
-    # Destination: --out wins, else the target framework's workspace root.
-    if args.out:
-        dst_spec = _build_allowlist(target_fw, name, args.out)
-    else:
-        dst_spec = _build_allowlist(target_fw, name, None)
-    dst_root = dst_spec.workspace_root
-
-    print(
-        f"Convert {source_fw} ({src_root}) -> {target_fw} ({dst_root}): "
-        f"{len(resources)} in, {len(converted)} out"
-    )
-    for rel in sorted(converted):
-        print(f"  {rel} -> {dst_root / rel}")
-
-    if args.dry_run:
-        print("\n[dry-run] nothing written.")
-        return 0
-
-    written = dst_spec.apply(converted)
-    print(f"\nWrote {len(written)} file(s) under {dst_root}.")
-    return 0
+    dst_spec = _build_allowlist(target_fw, name, args.out)
+    return convert_workspace(src_spec, source_fw, target_fw, dst_spec, dry_run=args.dry_run)
 
 
 def cmd_watch(args) -> int:
@@ -428,7 +468,7 @@ def cmd_watch(args) -> int:
     try:
         info = client.repo_info(group, repo)
         if info:
-            remote_fw = info.get("Framework") or info.get("framework") or ""
+            remote_fw = info.get("Framework", "")
             if remote_fw and remote_fw != framework:
                 return _fail(
                     f"framework mismatch: local={framework}, remote={remote_fw}. "
@@ -588,3 +628,4 @@ def cmd_recover(args) -> int:
 
     print(f"\nRestored {restored} file(s), removed {deleted} extra file(s).")
     return 0
+

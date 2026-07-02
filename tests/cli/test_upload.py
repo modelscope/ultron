@@ -192,7 +192,7 @@ class TestUploadCli(unittest.TestCase):
             self.assertFalse(p.startswith("agents/"))
 
 
-class TestListCli(unittest.TestCase):
+class TestStatusCli(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -204,12 +204,12 @@ class TestListCli(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_list_shows_agents(self):
-        rc = _run(["list", "--framework", "qoder", "--local_dir", str(self.root)])
+    def test_status_shows_agents(self):
+        rc = _run(["status", "--framework", "qoder", "--local_dir", str(self.root)])
         self.assertEqual(rc, 0)
 
-    def test_list_unknown_framework_fails(self):
-        rc = _run(["list", "--framework", "nope", "--local_dir", str(self.root)])
+    def test_status_unknown_framework_fails(self):
+        rc = _run(["status", "--framework", "nope", "--local_dir", str(self.root)])
         self.assertEqual(rc, 1)
 
 
