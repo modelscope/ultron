@@ -82,6 +82,43 @@ class UltronClient:
         """True if the repo exists, False on 404."""
         return self.repo_info(path, name) is not None
 
+    def list_agents(self, owner: Optional[str] = None, page_number: int = 1, page_size: int = 10) -> dict:
+        """List agent repositories (GET /agents).
+
+        Returns a dict with 'items' (list of agent metadata dicts) and
+        'total_count' (int).
+        """
+        params = {"page_number": page_number, "page_size": page_size}
+        if owner:
+            params["owner"] = owner
+        try:
+            data = self._openapi._request(
+                "GET", "/agents", params=params, require_token=False)
+        except HubError as exc:
+            raise _wrap(exc) from exc
+        # Normalize response: server may return {Data: [...], Total: N}
+        # or {items: [...], total_count: N}.
+        if isinstance(data, dict):
+            items = None
+            for key in ("Data", "items", "data"):
+                if key in data:
+                    items = data[key]
+                    break
+            if items is None:
+                items = []
+            total = data.get("Total")
+            if total is None:
+                total = data.get("total_count")
+            if total is None:
+                total = data.get("TotalCount")
+            if total is None:
+                total = len(items)
+            return {"items": items, "total_count": total}
+        # If response is a list directly
+        if isinstance(data, list):
+            return {"items": data, "total_count": len(data)}
+        return {"items": [], "total_count": 0}
+
     def create_repo(
         self, path: str, name: str, framework: str,
         visibility: str = "public",
