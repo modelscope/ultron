@@ -44,7 +44,7 @@ from ultron.services.harness.allowlist import (
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-SERVER = os.environ.get("SERVER", "http://pre.modelscope.cn")
+SERVER = os.environ.get("SERVER", "http://www.modelscope.cn")
 TOKEN = os.environ.get("TOKEN", "")
 AGENT_PREFIX = "test-updown"
 

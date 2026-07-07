@@ -18,20 +18,23 @@ class _StubClient:
         self.server = server
         self.token = token
         self.created = []
-        self.uploaded_resources = None
+        self.uploaded_resources = {}
         _StubClient.instances.append(self)
 
     def check_repo(self, path, name):
         return False
 
-    def upload_file(self, resources):
-        """Accept Dict[str, bytes]; return a fake Gid."""
-        self.uploaded_resources = resources
-        return "fake-gid-uuid"
-
-    def create_repo(self, path, name, framework, **kwargs):
-        self.created.append((path, name, framework, kwargs.get("system_prompt_files")))
+    def create_repo(self, path, name, framework=None):
+        self.created.append((path, name, framework))
         return {"success": True}
+
+    def commit_files(self, path, name, actions, *, revision="master", commit_message=""):
+        import base64 as _b64
+        for a in actions:
+            self.uploaded_resources[a["path"]] = _b64.b64decode(a["content"])
+
+    def upload_lfs_file(self, path, name, file_path, content, *, action="create", revision="master", commit_message=""):
+        self.uploaded_resources[file_path] = content
 
 
 def _run(argv):
@@ -84,10 +87,9 @@ class TestUploadCli(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(len(_StubClient.instances), 1)
         client = _StubClient.instances[0]
-        # create_repo called with (group, repo_name, framework, system_prompt_files)
+        # create_repo called with (group, repo_name, framework)
         self.assertEqual(len(client.created), 1)
-        self.assertEqual(client.created[0][:3], ("u", "qoder-reviewer", "qoder"))
-        self.assertEqual(client.created[0][3], "fake-gid-uuid")
+        self.assertEqual(client.created[0], ("u", "qoder-reviewer", "qoder"))
         # Verify uploaded resources are bytes-valued dict
         self.assertIsNotNone(client.uploaded_resources)
         self.assertIsInstance(client.uploaded_resources, dict)

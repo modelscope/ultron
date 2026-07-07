@@ -29,7 +29,7 @@ from ultron.services.harness.merge import merge_resources
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-SERVER = os.environ.get("SERVER", "http://pre.modelscope.cn")
+SERVER = os.environ.get("SERVER", "http://www.modelscope.cn")
 TOKEN = os.environ.get("TOKEN", "")
 AGENT_NAME = "test-agent-integration"
 
@@ -53,7 +53,7 @@ def _log_429(fn, *args, **kwargs):
 
 
 def _to_bytes(files: dict) -> dict:
-    """Convert a str-valued dict to bytes-valued for upload_file()."""
+    """Convert a str-valued dict to bytes-valued for commit upload."""
     return {
         k: (v.encode("utf-8") if isinstance(v, str) else v)
         for k, v in files.items()
@@ -202,50 +202,42 @@ class TestClientIntegration(unittest.TestCase):
     # 03. Upload + Create (nanobot — richest file set)
     # -----------------------------------------------------------------------
     def test_06_upload_and_create(self):
-        file_id = _log_429(self.client.upload_file, _to_bytes(NANOBOT_FILES))
-        self.assertTrue(file_id)
-
-        result = _log_429(
-            self.client.create_repo,
-            path=self.username, name=AGENT_NAME, framework="nanobot",
-            visibility="public", system_prompt_files=file_id,
+        from ultron.cli.sync import push_resources
+        _log_429(
+            push_resources,
+            self.client, self.username, AGENT_NAME, "nanobot",
+            _to_bytes(NANOBOT_FILES),
         )
-        self.assertIsInstance(result, dict)
         self.assertTrue(self.client.check_repo(self.username, AGENT_NAME))
 
     # -----------------------------------------------------------------------
     # 04. Repeated upload (idempotent upsert)
     # -----------------------------------------------------------------------
     def test_07_repeated_upload(self):
+        from ultron.cli.sync import push_resources
         _wait_server(3)
         for i in range(2):
-            fid = _log_429(self.client.upload_file, _to_bytes(NANOBOT_FILES))
-            self.assertTrue(fid)
-            result = _log_429(
-                self.client.create_repo,
-                path=self.username, name=AGENT_NAME, framework="nanobot",
-                visibility="public", system_prompt_files=fid,
+            _log_429(
+                push_resources,
+                self.client, self.username, AGENT_NAME, "nanobot",
+                _to_bytes(NANOBOT_FILES),
             )
-            self.assertIsInstance(result, dict)
             _wait_server(REQUEST_INTERVAL)
 
     # -----------------------------------------------------------------------
     # 05. Modify and re-upload
     # -----------------------------------------------------------------------
     def test_08_modify_and_reupload(self):
+        from ultron.cli.sync import push_resources
         modified = dict(NANOBOT_FILES)
         modified["SOUL.md"] += "\n## Custom Section\nUser added this.\n"
         modified["new_file.md"] = "# New File\nAdded in update.\n"
 
-        fid = _log_429(self.client.upload_file, _to_bytes(modified))
-        self.assertTrue(fid)
-
-        result = _log_429(
-            self.client.create_repo,
-            path=self.username, name=AGENT_NAME, framework="nanobot",
-            visibility="public", system_prompt_files=fid,
+        _log_429(
+            push_resources,
+            self.client, self.username, AGENT_NAME, "nanobot",
+            _to_bytes(modified),
         )
-        self.assertIsInstance(result, dict)
 
     # -----------------------------------------------------------------------
     # 06. List files
@@ -307,12 +299,11 @@ class TestClientIntegration(unittest.TestCase):
     # 09. E2E roundtrip
     # -----------------------------------------------------------------------
     def test_15_e2e_roundtrip(self):
-        fid = _log_429(self.client.upload_file, _to_bytes(NANOBOT_FILES))
-        self.assertTrue(fid)
+        from ultron.cli.sync import push_resources
         _log_429(
-            self.client.create_repo,
-            path=self.username, name=AGENT_NAME, framework="nanobot",
-            visibility="public", system_prompt_files=fid,
+            push_resources,
+            self.client, self.username, AGENT_NAME, "nanobot",
+            _to_bytes(NANOBOT_FILES),
         )
         _wait_server(5)
 
@@ -334,18 +325,16 @@ class TestClientIntegration(unittest.TestCase):
     # 10. Multi-framework upload
     # -----------------------------------------------------------------------
     def test_16_multi_framework_upload(self):
+        from ultron.cli.sync import push_resources
         for fw, files in ALL_FRAMEWORK_FILES.items():
             with self.subTest(framework=fw):
                 agent = f"{AGENT_NAME}-{fw}"
-                fid = _log_429(self.client.upload_file, _to_bytes(files))
-                self.assertTrue(fid)
                 try:
-                    result = _log_429(
-                        self.client.create_repo,
-                        path=self.username, name=agent, framework=fw,
-                        visibility="public", system_prompt_files=fid,
+                    _log_429(
+                        push_resources,
+                        self.client, self.username, agent, fw,
+                        _to_bytes(files),
                     )
-                    self.assertIsInstance(result, dict)
                 except ApiError as e:
                     self.fail(f"upload {fw} failed: status={e.status} {e.detail}")
                 _wait_server(REQUEST_INTERVAL)
@@ -354,20 +343,17 @@ class TestClientIntegration(unittest.TestCase):
     # 11. Cross-framework conversion
     # -----------------------------------------------------------------------
     def test_17_cross_framework_convert(self):
+        from ultron.cli.sync import push_resources
         for source_fw, target_fw in CONVERT_PAIRS:
             with self.subTest(pair=f"{source_fw}->{target_fw}"):
                 source_files = ALL_FRAMEWORK_FILES[source_fw]
                 agent = f"{AGENT_NAME}-conv-{source_fw}"
 
-                fid = _log_429(self.client.upload_file, _to_bytes(source_files))
-                try:
-                    _log_429(
-                        self.client.create_repo,
-                        path=self.username, name=agent, framework=source_fw,
-                        visibility="public", system_prompt_files=fid,
-                    )
-                except ApiError:
-                    pass  # may already exist
+                _log_429(
+                    push_resources,
+                    self.client, self.username, agent, source_fw,
+                    _to_bytes(source_files),
+                )
 
                 _wait_server(3)
 
@@ -409,62 +395,62 @@ class TestClientIntegration(unittest.TestCase):
     # -----------------------------------------------------------------------
     # 12. Edge: empty zip
     # -----------------------------------------------------------------------
-    def test_18_empty_zip(self):
-        try:
-            fid = _log_429(self.client.upload_file, {})
-            # Accepted is fine; empty file_id is also acceptable
-        except ApiError:
-            pass  # server may reject empty uploads
+    def test_18_empty_upload(self):
+        from ultron.cli.sync import push_resources
+        # push_resources with empty dict should be a no-op (skip).
+        push_resources(self.client, self.username, f"{AGENT_NAME}-empty", "qoder", {})
 
     # -----------------------------------------------------------------------
     # 13. Edge: large file
     # -----------------------------------------------------------------------
     def test_19_large_file(self):
+        from ultron.cli.sync import push_resources
         large_content = "x" * (500 * 1024)
         files = {"SOUL.md": b"# Soul\nLarge file test.\n", "data/large.txt": large_content.encode("utf-8")}
-        fid = _log_429(self.client.upload_file, files)
-        self.assertTrue(fid)
+        _log_429(
+            push_resources,
+            self.client, self.username, f"{AGENT_NAME}-large", "qoder", files,
+        )
 
     # -----------------------------------------------------------------------
     # 14. Edge: special characters in path
     # -----------------------------------------------------------------------
     def test_20_special_chars_path(self):
+        from ultron.cli.sync import push_resources
         files = {
             "SOUL.md": b"# Soul\nSpecial chars test.\n",
             "memory/user-notes (1).md": b"# Notes\nParentheses in filename.\n",
             "skills/web-search-v2/SKILL.md": b"# Web Search v2\nHyphen in skill name.\n",
         }
-        fid = _log_429(self.client.upload_file, files)
-        self.assertTrue(fid)
+        _log_429(
+            push_resources,
+            self.client, self.username, f"{AGENT_NAME}-special", "qoder", files,
+        )
 
     # -----------------------------------------------------------------------
     # 15. Edge: visibility variants
     # -----------------------------------------------------------------------
     def test_21_visibility_variants(self):
+        from ultron.cli.sync import push_resources
         for vis in ["public", "private"]:
             with self.subTest(visibility=vis):
                 files = {"SOUL.md": f"# Soul\nVisibility={vis} test.\n".encode("utf-8")}
-                fid = _log_429(self.client.upload_file, files)
-                self.assertTrue(fid)
-                result = _log_429(
-                    self.client.create_repo,
-                    path=self.username, name=f"{AGENT_NAME}-vis-{vis}",
-                    framework="qoder", visibility=vis,
-                    system_prompt_files=fid,
+                _log_429(
+                    push_resources,
+                    self.client, self.username, f"{AGENT_NAME}-vis-{vis}",
+                    "qoder", files,
                 )
-                self.assertIsInstance(result, dict)
                 _wait_server(REQUEST_INTERVAL)
 
     # -----------------------------------------------------------------------
     # 16. Edge: upload then immediate download
     # -----------------------------------------------------------------------
     def test_22_immediate_download(self):
+        from ultron.cli.sync import push_resources
         files = {"SOUL.md": b"# Soul\nImmediate download test.\n", "README.md": b"# README\n"}
-        fid = _log_429(self.client.upload_file, files)
         _log_429(
-            self.client.create_repo,
-            path=self.username, name=AGENT_NAME, framework="qoder",
-            visibility="public", system_prompt_files=fid,
+            push_resources,
+            self.client, self.username, AGENT_NAME, "qoder", files,
         )
         # Immediate list — may be empty if async
         immediate_files = self.client.list_repo_files(self.username, AGENT_NAME)
@@ -474,6 +460,7 @@ class TestClientIntegration(unittest.TestCase):
     # 17. Framework-specific structure verification
     # -----------------------------------------------------------------------
     def test_23_framework_structure(self):
+        from ultron.cli.sync import push_resources
         framework_markers = {
             "nanobot": ["AGENTS.md", "TOOLS.md", "agents/test-bot.md", "memory/MEMORY.md"],
             "openclaw": ["IDENTITY.md", "BOOTSTRAP.md", "memory/project-notes.md"],
@@ -487,15 +474,11 @@ class TestClientIntegration(unittest.TestCase):
             with self.subTest(framework=fw):
                 files = ALL_FRAMEWORK_FILES[fw]
                 agent = f"{AGENT_NAME}-struct-{fw}"
-                fid = _log_429(self.client.upload_file, _to_bytes(files))
-                try:
-                    _log_429(
-                        self.client.create_repo,
-                        path=self.username, name=agent, framework=fw,
-                        visibility="public", system_prompt_files=fid,
-                    )
-                except ApiError:
-                    pass
+                _log_429(
+                    push_resources,
+                    self.client, self.username, agent, fw,
+                    _to_bytes(files),
+                )
 
                 _wait_server(REQUEST_INTERVAL)
 

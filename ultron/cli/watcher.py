@@ -108,8 +108,7 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
         remote_sha_map = {f.path: f.sha256 for f in remote_files if f.path in scope}
 
         remote_changed = (
-            max((f.committed_date for f in remote_files), default=0) > state["last_commit_date"]
-            or set(remote_sha_map.keys()) != set(state.get("remote_files", {}).keys())
+            remote_sha_map != state.get("remote_files", {})
         )
         local_changed = bool(detect_local_changes(local_resources, state["remote_files"]))
 
@@ -140,7 +139,7 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
     sf.unlink(missing_ok=True)
 
 
-def _push_local(client, username, name, framework, local_resources, state, logger, *, remote_paths=None) -> bool:
+def _push_local(client, username, name, framework, local_resources, state, logger, *, remote_paths=None, remote_lfs_paths=None) -> bool:
     """Push local changes: full upload on first time, incremental thereafter.
 
     Returns True if something was actually pushed, False otherwise.
@@ -171,7 +170,8 @@ def _push_local(client, username, name, framework, local_resources, state, logge
                 return False
             # Use actual remote paths (not stale baseline) for CREATE vs UPDATE.
             actual = remote_paths if remote_paths is not None else set(state["remote_files"].keys())
-            push_incremental(client, username, name, changed, actual)
+            push_incremental(client, username, name, changed, actual,
+                             remote_lfs_paths=remote_lfs_paths)
             logger.info("Pushed local changes (incremental commit).")
             return True
         return False
@@ -185,11 +185,13 @@ def _sync_action(
 ) -> bool:
     """Execute the appropriate sync action. Returns True if something changed."""
     remote_paths = {f.path for f in remote_files}
+    remote_lfs_paths = {f.path for f in remote_files if getattr(f, 'is_lfs', False)}
 
     if push_only:
         if not local_changed:
             return False
-        return _push_local(client, username, name, framework, local_resources, state, logger, remote_paths=remote_paths)
+        return _push_local(client, username, name, framework, local_resources, state, logger,
+                           remote_paths=remote_paths, remote_lfs_paths=remote_lfs_paths)
 
     if remote_changed and local_changed:
         backup_path = backup_local(spec, name)
@@ -200,7 +202,8 @@ def _sync_action(
         pull_incremental(client, username, name, spec, remote_files, local_resources)
         logger.info("Pulled remote changes (backup: %s).", backup_path)
     elif local_changed:
-        _push_local(client, username, name, framework, local_resources, state, logger, remote_paths=remote_paths)
+        _push_local(client, username, name, framework, local_resources, state, logger,
+                    remote_paths=remote_paths, remote_lfs_paths=remote_lfs_paths)
     else:
         return False
     return True

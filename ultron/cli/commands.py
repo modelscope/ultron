@@ -282,16 +282,14 @@ def cmd_upload(args) -> int:
         username=username,
     )
 
-    # Step 1: upload files -> get file_id
+    # Step 1: upload files via commit interface
     try:
-        file_id = client.upload_file(resources)
-        # Step 2: create/update agent with file_id
-        result = client.create_repo(
-            group, repo, framework,
-            system_prompt_files=file_id,
-        )
+        from .sync import push_resources
+        push_resources(client, group, repo, framework, resources)
     except ApiError as e:
         return _fail(_api_error_message(e, "upload"))
+    except Exception as e:
+        return _fail(f"upload failed: {e}")
 
     print(
         f"\nUploaded {len(resources)} file(s) to "
