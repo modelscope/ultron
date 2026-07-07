@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 from urllib.parse import unquote
 
-import requests
 from modelscope_hub._openapi import OpenAPIClient
 from modelscope_hub.config import HubConfig
 from modelscope_hub.errors import HubError, NotExistError
@@ -207,16 +206,13 @@ class UltronClient:
         Returns bytes when *binary=True*, otherwise str.
         """
         url = f"{self.server}/agents/{path}/{name}/resolve/{revision}/{file_path}"
-        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         try:
-            resp = requests.get(url, headers=headers, timeout=self.timeout)
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else 0
-            detail = exc.response.text if exc.response is not None else str(exc)
-            raise ApiError(status, detail) from exc
-        except requests.RequestException as exc:
-            raise ApiError(0, str(exc)) from exc
+            resp = self._openapi.request(
+                "GET", url=url, unwrap=False,
+                timeout=float(self.timeout),
+            )
+        except HubError as exc:
+            raise _wrap(exc) from exc
         return resp.content if binary else resp.text
 
     # ---- upload (two-step OSS) ----
@@ -228,18 +224,15 @@ class UltronClient:
         capitalised keys: {"Code": 200, "Data": {...}, "Success": true}.
         """
         url = f"{self.server}/api/v1/agents/repo/files/upload"
-        headers = {"Authorization": f"Bearer {self.token}",
-                   "Content-Type": "application/json"}
         try:
-            resp = requests.post(url, json={"FileNames": filenames},
-                                headers=headers, timeout=self.timeout)
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else 0
-            detail = exc.response.text if exc.response is not None else str(exc)
-            raise ApiError(status, detail) from exc
-        except requests.RequestException as exc:
-            raise ApiError(0, str(exc)) from exc
+            resp = self._openapi.request(
+                "POST", url=url,
+                json_body={"FileNames": filenames},
+                unwrap=False,
+                timeout=float(self.timeout),
+            )
+        except HubError as exc:
+            raise _wrap(exc) from exc
         body = resp.json()
         if not body.get("Success"):
             raise ApiError(body.get("Code", 0), body.get("Message", "upload credential failed"))
@@ -277,19 +270,19 @@ class UltronClient:
         """
         url = self._normalize_oss_url(signed_url)
         try:
-            resp = requests.put(url, data=data,
-                                headers={
-                                    "Content-Type": "application/octet-stream",
-                                    "x-oss-meta-author": "aliy",
-                                },
-                                timeout=max(self.timeout, 300))
-            resp.raise_for_status()
-        except requests.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else 0
-            detail = exc.response.text if exc.response is not None else str(exc)
-            raise ApiError(status, detail) from exc
-        except requests.RequestException as exc:
-            raise ApiError(0, str(exc)) from exc
+            self._openapi.request(
+                "PUT", url=url,
+                data=data,
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "x-oss-meta-author": "aliy",
+                },
+                require_token=False,
+                unwrap=False,
+                timeout=float(max(self.timeout, 300)),
+            )
+        except HubError as exc:
+            raise _wrap(exc) from exc
 
     def upload_file(self, resources: Dict[str, bytes]) -> str:
         """Two-step upload: get signed URLs → PUT to OSS → return Gid.

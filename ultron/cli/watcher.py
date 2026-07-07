@@ -62,9 +62,11 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
     # Unix: register signal handlers for graceful stop via kill(1).
     # Windows: SIGTERM triggers TerminateProcess (hard kill), so signals are
     # unreliable; the stop-file mechanism below is the primary channel.
-    if hasattr(signal, "SIGTERM"):
-        signal.signal(signal.SIGTERM, _handle_term)
-    signal.signal(signal.SIGINT, _handle_term)
+    # signal.signal() can only be called from the main thread.
+    if threading.current_thread() is threading.main_thread():
+        if hasattr(signal, "SIGTERM"):
+            signal.signal(signal.SIGTERM, _handle_term)
+        signal.signal(signal.SIGINT, _handle_term)
 
     # Remove any stale stop file from a previous session.
     sf.unlink(missing_ok=True)
@@ -129,8 +131,11 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
 
     logger.info("Watch stopped (signal received).")
     pf = pid_file()
-    if pf.exists():
-        pf.unlink(missing_ok=True)
+    try:
+        if pf.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            pf.unlink(missing_ok=True)
+    except Exception:
+        pass
     sf.unlink(missing_ok=True)
 
 
@@ -162,17 +167,21 @@ def _sync_action(
     state,
 ) -> bool:
     """Execute the appropriate sync action. Returns True if something changed."""
+    # Backup naming convention: {framework}_{agent_name} so that
+    # ``cmd_recover --framework`` can filter watch-created backups.
+    backup_label = f"{framework}_{spec.agent_name}"
+
     if push_only:
         if not local_changed:
             return False
         return _push_local(client, username, name, framework, local_resources, state, logger)
 
     if remote_changed and local_changed:
-        backup_path = backup_local(spec, name)
+        backup_path = backup_local(spec, backup_label)
         pull_incremental(client, username, name, spec, remote_files, local_resources)
         logger.warning("Conflict: remote wins. Local backup: %s", backup_path)
     elif remote_changed:
-        backup_path = backup_local(spec, name)
+        backup_path = backup_local(spec, backup_label)
         pull_incremental(client, username, name, spec, remote_files, local_resources)
         logger.info("Pulled remote changes (backup: %s).", backup_path)
     elif local_changed:
@@ -247,7 +256,11 @@ def _daemonize_unix(target, *args, **kwargs):
     try:
         target(*args, **kwargs)
     finally:
-        pf.unlink(missing_ok=True)
+        try:
+            if pf.exists() and pf.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                pf.unlink(missing_ok=True)
+        except Exception:
+            pass
         os._exit(0)
 
 
