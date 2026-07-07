@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 from urllib.parse import unquote
 
+import requests
 from modelscope_hub._openapi import OpenAPIClient
 from modelscope_hub.config import HubConfig
 from modelscope_hub.errors import HubError, NotExistError
@@ -64,7 +65,7 @@ class UltronClient:
             data = self._openapi.get_current_user()
         except HubError as exc:
             raise _wrap(exc) from exc
-        return data.get("username") or data.get("Username") or ""
+        return data.get("username", data.get("Username", ""))
 
     # ---- repository ----
 
@@ -95,12 +96,27 @@ class UltronClient:
                 "GET", "/agents", params=params, require_token=False)
         except HubError as exc:
             raise _wrap(exc) from exc
+        # Normalize response: server may return {Data: [...], Total: N}
+        # or {items: [...], total_count: N}.
+        if isinstance(data, dict):
+            items = None
+            for key in ("Data", "items", "data"):
+                if key in data:
+                    items = data[key]
+                    break
+            if items is None:
+                items = []
+            total = data.get("Total")
+            if total is None:
+                total = data.get("total_count")
+            if total is None:
+                total = data.get("TotalCount")
+            if total is None:
+                total = len(items)
+            return {"items": items, "total_count": total}
+        # If response is a list directly
         if isinstance(data, list):
             return {"items": data, "total_count": len(data)}
-        if isinstance(data, dict):
-            items = data.get("Data") or []
-            total = data.get("Total") or data.get("TotalCount") or len(items)
-            return {"items": items, "total_count": total}
         return {"items": [], "total_count": 0}
 
     def create_repo(
@@ -172,7 +188,7 @@ class UltronClient:
 
             raw = []
             if isinstance(data, dict):
-                raw = data.get("Trees") or data.get("trees") or []
+                raw = data.get("trees") or data.get("Trees") or []
             elif isinstance(data, list):
                 raw = data
 
@@ -180,10 +196,10 @@ class UltronClient:
                 if not isinstance(item, dict):
                     continue
                 all_entries.append({
-                    "path": item.get("Path") or item.get("path") or "",
-                    "type": item.get("Type") or item.get("type") or "",
-                    "sha256": item.get("Sha256") or item.get("sha256") or "",
-                    "committed_date": item.get("Committed_date") or item.get("committed_date") or 0,
+                    "path": item.get("path") or item.get("Path") or "",
+                    "type": item.get("type") or item.get("Type") or "",
+                    "sha256": item.get("sha256") or item.get("Sha256") or "",
+                    "committed_date": item.get("committed_date") or item.get("Committed_date") or 0,
                 })
 
             if len(raw) < page_size:
@@ -206,13 +222,16 @@ class UltronClient:
         Returns bytes when *binary=True*, otherwise str.
         """
         url = f"{self.server}/agents/{path}/{name}/resolve/{revision}/{file_path}"
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         try:
-            resp = self._openapi.request(
-                "GET", url=url, unwrap=False,
-                timeout=float(self.timeout),
-            )
-        except HubError as exc:
-            raise _wrap(exc) from exc
+            resp = requests.get(url, headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            detail = exc.response.text if exc.response is not None else str(exc)
+            raise ApiError(status, detail) from exc
+        except requests.RequestException as exc:
+            raise ApiError(0, str(exc)) from exc
         return resp.content if binary else resp.text
 
     # ---- upload (two-step OSS) ----
@@ -224,15 +243,18 @@ class UltronClient:
         capitalised keys: {"Code": 200, "Data": {...}, "Success": true}.
         """
         url = f"{self.server}/api/v1/agents/repo/files/upload"
+        headers = {"Authorization": f"Bearer {self.token}",
+                   "Content-Type": "application/json"}
         try:
-            resp = self._openapi.request(
-                "POST", url=url,
-                json_body={"FileNames": filenames},
-                unwrap=False,
-                timeout=float(self.timeout),
-            )
-        except HubError as exc:
-            raise _wrap(exc) from exc
+            resp = requests.post(url, json={"FileNames": filenames},
+                                headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            detail = exc.response.text if exc.response is not None else str(exc)
+            raise ApiError(status, detail) from exc
+        except requests.RequestException as exc:
+            raise ApiError(0, str(exc)) from exc
         body = resp.json()
         if not body.get("Success"):
             raise ApiError(body.get("Code", 0), body.get("Message", "upload credential failed"))
@@ -270,19 +292,19 @@ class UltronClient:
         """
         url = self._normalize_oss_url(signed_url)
         try:
-            self._openapi.request(
-                "PUT", url=url,
-                data=data,
-                headers={
-                    "Content-Type": "application/octet-stream",
-                    "x-oss-meta-author": "aliy",
-                },
-                require_token=False,
-                unwrap=False,
-                timeout=float(max(self.timeout, 300)),
-            )
-        except HubError as exc:
-            raise _wrap(exc) from exc
+            resp = requests.put(url, data=data,
+                                headers={
+                                    "Content-Type": "application/octet-stream",
+                                    "x-oss-meta-author": "aliy",
+                                },
+                                timeout=max(self.timeout, 300))
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            detail = exc.response.text if exc.response is not None else str(exc)
+            raise ApiError(status, detail) from exc
+        except requests.RequestException as exc:
+            raise ApiError(0, str(exc)) from exc
 
     def upload_file(self, resources: Dict[str, bytes]) -> str:
         """Two-step upload: get signed URLs → PUT to OSS → return Gid.

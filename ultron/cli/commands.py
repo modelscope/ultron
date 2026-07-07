@@ -465,7 +465,7 @@ def cmd_watch(args) -> int:
     try:
         info = client.repo_info(group, repo)
         if info:
-            remote_fw = info.get("Framework", "")
+            remote_fw = info.get("Framework") or info.get("framework") or ""
             if remote_fw and remote_fw != framework:
                 return _fail(
                     f"framework mismatch: local={framework}, remote={remote_fw}. "
