@@ -156,8 +156,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Local sub-agent name (default: global/shared files only).",
     )
     p_watch.add_argument(
-        "--repo", "-r",
-        help="Remote repository name. Supports 'group/name' format. Defaults to local name.",
+        "--repo", "-r", required=True,
+        help="Remote repository name (required). Supports 'group/name' format.",
     )
     p_watch.add_argument("--local_dir", "-d", help="Override workspace root.")
     p_watch.add_argument("--server", help="Server URL override.")

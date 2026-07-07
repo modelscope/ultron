@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 from typing import List, Optional
 
 from .cache import load_sync_state, log_file, pid_file, save_sync_state, stop_file
-from .client import ApiError
+from .client import ApiError, UltronClient
 from .sync import (
     backup_local,
     detect_local_changes,
@@ -46,6 +46,12 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
                    False = full bidirectional sync (remote wins on conflict).
     """
     logger = _get_logger()
+
+    # After double-fork, the parent's requests.Session connection pool holds
+    # stale file descriptors that cause EBADF on new connections.  Rebuild the
+    # entire client so the daemon starts with a fresh session.
+    client = UltronClient(client.server, client.token, client.timeout)
+
     logger.info("Watch started for %s/%s (root=%s, interval=%ds, push_only=%s)",
                 username, repo, spec.workspace_root, interval, push_only)
 
@@ -134,7 +140,7 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
     sf.unlink(missing_ok=True)
 
 
-def _push_local(client, username, name, framework, local_resources, state, logger) -> bool:
+def _push_local(client, username, name, framework, local_resources, state, logger, *, remote_paths=None) -> bool:
     """Push local changes: full upload on first time, incremental thereafter.
 
     Returns True if something was actually pushed, False otherwise.
@@ -149,7 +155,23 @@ def _push_local(client, username, name, framework, local_resources, state, logge
     else:
         changed = detect_local_changes(local_resources, state["remote_files"])
         if changed:
-            push_incremental(client, username, name, changed, set(state["remote_files"].keys()))
+            # Filter stale DELETEs: only delete files that actually exist on
+            # the remote.  The baseline may be stale if the remote was
+            # modified outside watch (e.g. via upload or manual deletion).
+            if remote_paths is not None:
+                stale = {
+                    p for p, c in changed.items()
+                    if c is None and p not in remote_paths
+                }
+                for p in sorted(stale):
+                    logger.warning("  SKIP DELETE: %s (not on remote, stale baseline)", p)
+                    del changed[p]
+            if not changed:
+                logger.info("No real changes to push after filtering stale deletes.")
+                return False
+            # Use actual remote paths (not stale baseline) for CREATE vs UPDATE.
+            actual = remote_paths if remote_paths is not None else set(state["remote_files"].keys())
+            push_incremental(client, username, name, changed, actual)
             logger.info("Pushed local changes (incremental commit).")
             return True
         return False
@@ -162,10 +184,12 @@ def _sync_action(
     state,
 ) -> bool:
     """Execute the appropriate sync action. Returns True if something changed."""
+    remote_paths = {f.path for f in remote_files}
+
     if push_only:
         if not local_changed:
             return False
-        return _push_local(client, username, name, framework, local_resources, state, logger)
+        return _push_local(client, username, name, framework, local_resources, state, logger, remote_paths=remote_paths)
 
     if remote_changed and local_changed:
         backup_path = backup_local(spec, name)
@@ -176,7 +200,7 @@ def _sync_action(
         pull_incremental(client, username, name, spec, remote_files, local_resources)
         logger.info("Pulled remote changes (backup: %s).", backup_path)
     elif local_changed:
-        _push_local(client, username, name, framework, local_resources, state, logger)
+        _push_local(client, username, name, framework, local_resources, state, logger, remote_paths=remote_paths)
     else:
         return False
     return True
