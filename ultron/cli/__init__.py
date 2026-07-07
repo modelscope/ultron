@@ -10,7 +10,7 @@ Subcommands:
 import argparse
 import sys
 
-from .commands import cmd_convert, cmd_download, cmd_login, cmd_recover, cmd_status, cmd_stop, cmd_upload, cmd_watch
+from .commands import cmd_convert, cmd_download, cmd_list, cmd_login, cmd_recover, cmd_status, cmd_stop, cmd_upload, cmd_watch
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -119,6 +119,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the converted files without writing.",
     )
     p_cv.set_defaults(func=cmd_convert)
+
+    # ---- list (remote) ----
+    p_list = sub.add_parser(
+        "list",
+        help="List remote agent repositories.",
+        description="Query and display remote agent repositories with pagination.",
+    )
+    p_list.add_argument(
+        "--owner", default=None,
+        help="Filter by owner username or organization name.",
+    )
+    p_list.add_argument(
+        "--page", dest="page_number", type=int, default=1,
+        help="Page number for pagination (default: 1).",
+    )
+    p_list.add_argument(
+        "--page-size", dest="page_size", type=int, default=10,
+        help="Number of items per page (default: 10).",
+    )
+    p_list.add_argument("--server", help="Server URL override.")
+    p_list.add_argument("--token", help="API token override.")
+    p_list.set_defaults(func=cmd_list)
 
     # ---- status ----
     p_status = sub.add_parser(

@@ -161,6 +161,60 @@ def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
     return result.merged_files
 
 
+def cmd_list(args) -> int:
+    """List remote agent repositories."""
+    server = config.resolve_server(getattr(args, 'server', None))
+    token = config.resolve_token(getattr(args, 'token', None))
+    if not server:
+        return _fail("not logged in. Run 'ultron login' first or pass --server.")
+
+    client = UltronClient(server, token)
+    try:
+        result = client.list_agents(
+            owner=getattr(args, 'owner', None),
+            page_number=getattr(args, 'page_number', 1),
+            page_size=getattr(args, 'page_size', 10),
+        )
+    except ApiError as e:
+        return _fail(_api_error_message(e, "list"))
+    except Exception as e:
+        return _fail(f"list failed: {e}")
+
+    items = result.get("items") or []
+    total = result.get("total_count", len(items))
+
+    if not items:
+        print("(no agent repositories found)")
+        return 0
+
+    headers = ['repo_id', 'framework', 'visibility', 'updated']
+    rows = []
+    for item in items:
+        owner_name = item.get('Path') or item.get('path') or ''
+        repo_name = item.get('Name') or item.get('name') or ''
+        repo_id = f'{owner_name}/{repo_name}' if owner_name else repo_name
+        fw = item.get('Framework') or item.get('framework') or '-'
+        vis = item.get('Visibility') or item.get('visibility') or '-'
+        updated = item.get('LastUpdatedDate') or item.get('last_updated_date') or '-'
+        if isinstance(updated, str) and 'T' in updated:
+            updated = updated.split('T')[0]
+        rows.append((repo_id, fw, vis, updated))
+
+    col_widths = [len(h) for h in headers]
+    for row in rows:
+        for i, val in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(str(val)))
+
+    fmt = '  '.join(f'{{:<{w}}}' for w in col_widths)
+    print(fmt.format(*headers))
+    print(fmt.format(*['-' * w for w in col_widths]))
+    for row in rows:
+        print(fmt.format(*[str(v) for v in row]))
+
+    print(f'\npage {getattr(args, "page_number", 1)} / total {total} (page_size={getattr(args, "page_size", 10)})')
+    return 0
+
+
 def cmd_status(args) -> int:
     """List discoverable sub-agents for a framework."""
     framework = args.framework
