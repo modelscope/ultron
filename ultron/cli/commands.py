@@ -588,13 +588,14 @@ def cmd_recover(args) -> int:
             filtered = []
             for f in backups:
                 parts = f.stem.rsplit("_", 2)
-                if len(parts) >= 3:
-                    prefix = parts[0]  # e.g. "qwenpaw_default"
-                else:
-                    prefix = f.stem
-                if fw_filter and not prefix.startswith(fw_filter):
+                prefix = parts[0] if len(parts) >= 3 else f.stem
+                delim = "_" if "_" in prefix else "-"
+                parts_fw = prefix.split(delim, 1)
+                fw = parts_fw[0]
+                name = parts_fw[1] if len(parts_fw) > 1 else ""
+                if fw_filter and fw != fw_filter:
                     continue
-                if name_filter and f"_{name_filter}_" not in f.stem:
+                if name_filter and name != name_filter:
                     continue
                 filtered.append(f)
             backups = filtered
@@ -622,9 +623,15 @@ def cmd_recover(args) -> int:
     if fw_filter or name_filter:
         filtered = []
         for f in backups:
-            if fw_filter and not f.stem.startswith(fw_filter):
+            parts = f.stem.rsplit("_", 2)
+            prefix = parts[0] if len(parts) >= 3 else f.stem
+            delim = "_" if "_" in prefix else "-"
+            parts_fw = prefix.split(delim, 1)
+            fw = parts_fw[0]
+            name = parts_fw[1] if len(parts_fw) > 1 else ""
+            if fw_filter and fw != fw_filter:
                 continue
-            if name_filter and f"_{name_filter}_" not in f.stem:
+            if name_filter and name != name_filter:
                 continue
             filtered.append(f)
         backups = filtered

@@ -293,7 +293,7 @@ class TestBackupsFilterCli(unittest.TestCase):
         from contextlib import redirect_stdout
         buf = io.StringIO()
         with redirect_stdout(buf):
-            rc = _run(["restore", "last", "--framework", "qoder"])
+            rc = _run(["restore", "last", "--framework", "qoder", "--local_dir", str(self.cache_dir)])
         # rc=1 because the fake zip is not a real zip, but it should attempt
         # the qoder_reviewer (latest qoder) not the qwenpaw one.
         # If it picked wrong, it would fail with "no backups found" or use qwenpaw.
