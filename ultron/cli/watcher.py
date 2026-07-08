@@ -47,9 +47,9 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
     """
     logger = _get_logger()
 
-    # After double-fork, the parent's requests.Session connection pool holds
-    # stale file descriptors that cause EBADF on new connections.  Rebuild the
-    # entire client so the daemon starts with a fresh session.
+    # The daemon runs in a freshly exec'd interpreter, but watch_loop may also
+    # be invoked directly (tests / foreground).  Rebuild the client so we always
+    # start with a clean requests.Session connection pool.
     client = UltronClient(client.server, client.token, client.timeout)
 
     logger.info("Watch started for %s/%s (root=%s, interval=%ds, push_only=%s)",
@@ -234,64 +234,24 @@ def _refresh_baseline(client, username: str, name: str, local_resources: dict, s
 
 
 def daemonize(target, *args, **kwargs):
-    """Launch *target* as a background process.
+    """Launch the watch loop as a fresh background process (fork + exec).
 
-    Unix: classic double-fork.
-    Windows: subprocess.Popen with DETACHED_PROCESS.
-    """
-    if hasattr(os, "fork"):
-        _daemonize_unix(target, *args, **kwargs)
-    else:
-        _daemonize_windows(target, *args, **kwargs)
-
-
-def _daemonize_unix(target, *args, **kwargs):
-    """Double-fork daemon (Unix only)."""
-    pf = pid_file()
-
-    pid = os.fork()
-    if pid > 0:
-        return  # Parent returns immediately.
-
-    os.setsid()
-
-    pid = os.fork()
-    if pid > 0:
-        os._exit(0)  # First child exits; grandchild is the actual daemon.
-
-    # Grandchild: write PID and redirect stdio.
-    pf.write_text(str(os.getpid()), encoding="utf-8")
-
-    sys.stdout.flush()
-    sys.stderr.flush()
-    with open(os.devnull, "r") as devnull:
-        os.dup2(devnull.fileno(), sys.stdin.fileno())
-    log_fd = os.open(str(log_file()), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-    os.dup2(log_fd, sys.stdout.fileno())
-    os.dup2(log_fd, sys.stderr.fileno())
-    os.close(log_fd)
-
-    try:
-        target(*args, **kwargs)
-    finally:
-        pf.unlink(missing_ok=True)
-        os._exit(0)
-
-
-def _daemonize_windows(target, *args, **kwargs):
-    """Spawn a detached background process (Windows).
-
-    Re-launches Python with ``ultron _watch_daemon`` internal command,
-    passing serialized arguments via a temp JSON file.
+    Spawns a brand-new Python interpreter running the ``_watch_daemon`` entry
+    point on ALL platforms.  Using exec (rather than a bare ``os.fork()``)
+    guarantees the daemon starts from a clean process image.  This is essential
+    on macOS, where calling into system frameworks (e.g. ``_scproxy`` /
+    ``SystemConfiguration`` for proxy detection during an HTTPS request) inside
+    a fork-without-exec child crashes with SIGSEGV.  It also avoids stale file
+    descriptors inherited from the parent's connection pool.
     """
     import json
     import tempfile
 
-    # Serialize the arguments that watch_loop needs.
-    # spec (args[0]) carries the agent_name used to build the allowlist scope.
+    # spec (args[0]) carries the agent_name/local_dir used to build the scope.
     # client (args[1]) carries server/token for the child process.
     spec_obj = args[0] if len(args) > 0 else None
     client_obj = args[1] if len(args) > 1 else None
+    local_dir = getattr(spec_obj, "_local_dir", None) if spec_obj else None
     payload = {
         "username": args[2] if len(args) > 2 else kwargs.get("username", ""),
         "repo": args[3] if len(args) > 3 else kwargs.get("repo", ""),
@@ -299,28 +259,46 @@ def _daemonize_windows(target, *args, **kwargs):
         "interval": args[5] if len(args) > 5 else kwargs.get("interval", 120),
         "push_only": kwargs.get("push_only", True),
         "local_name": getattr(spec_obj, "agent_name", "") if spec_obj else "",
+        "local_dir": str(local_dir) if local_dir else "",
         "server": getattr(client_obj, "server", "") if client_obj else "",
         "token": getattr(client_obj, "token", "") if client_obj else "",
-        # spec and client are rebuilt in the child from stored config.
     }
-    # Write to a temp file that the child will read and delete.
     fd, param_path = tempfile.mkstemp(suffix=".json", prefix="ultron_watch_")
     with os.fdopen(fd, "w") as f:
         json.dump(payload, f)
 
-    # Launch detached subprocess.
-    CREATE_NO_WINDOW = 0x08000000
-    DETACHED_PROCESS = 0x00000008
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "ultron.cli", "_watch_daemon", param_path],
-        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
-        close_fds=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-    )
-    # Write PID file.
+    cmd = [sys.executable, "-m", "ultron.cli", "_watch_daemon", param_path]
     pf = pid_file()
+
+    if hasattr(os, "fork"):
+        # Unix: detach into a new session (setsid equivalent) and redirect the
+        # daemon's stdio to the log file so tracebacks are never lost.
+        lf = log_file()
+        lf.parent.mkdir(parents=True, exist_ok=True)
+        log_fd = os.open(str(lf), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                start_new_session=True,
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fd,
+                stderr=log_fd,
+            )
+        finally:
+            os.close(log_fd)
+    else:
+        CREATE_NO_WINDOW = 0x08000000
+        DETACHED_PROCESS = 0x00000008
+        proc = subprocess.Popen(
+            cmd,
+            creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+            close_fds=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+
     pf.write_text(str(proc.pid), encoding="utf-8")
 
 

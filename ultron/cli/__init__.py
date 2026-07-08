@@ -253,6 +253,7 @@ def _run_watch_daemon(param_path: str) -> int:
     interval = payload.get("interval", 120)
     push_only = payload.get("push_only", True)
     local_name = payload.get("local_name") or ALL_AGENT_NAME
+    local_dir = payload.get("local_dir") or None
 
     if not repo:
         repo = "default"
@@ -264,7 +265,7 @@ def _run_watch_daemon(param_path: str) -> int:
     if not server or not token or not username:
         return 1
 
-    spec = _build_allowlist(framework, local_name, None)
+    spec = _build_allowlist(framework, local_name, local_dir)
     client = UltronClient(server, token)
 
     # Redirect stdout/stderr to log file.

@@ -528,7 +528,7 @@ def cmd_watch(args) -> int:
             return _fail(_api_error_message(e, "watch"))
         # repo not found or unreachable — proceed, first push will create it
 
-    interval = 120
+    interval = 60
     push_only = not getattr(args, "pull", False)
     print(f"Starting sync for {group}/{repo} (interval={interval}s)...")
     print(f"  Framework: {framework}")
