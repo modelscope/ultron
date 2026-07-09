@@ -603,7 +603,7 @@ def cmd_watch(args) -> int:
     print(f"  Logs: {pid_file().parent / 'logs' / 'watch.log'}")
     print(f"  Stop: ultron stop")
 
-    daemonize(watch_loop, spec, client, username, repo, framework, interval, push_only=push_only)
+    daemonize(watch_loop, spec, client, group, repo, framework, interval, push_only=push_only)
     # If we reach here, we are the parent process (daemon forked successfully).
     print(f"  Watch started (PID file: {pf}).")
     return 0
@@ -619,6 +619,48 @@ def cmd_stop(args) -> int:
     else:
         print("No watch process running.")
     return 0
+
+
+def _strip_backup_wrapper(filename: str) -> str:
+    """Strip the legacy ``agent/`` wrapper dir from a backup zip entry.
+
+    Older backups stored files under an ``agent/`` prefix; new backups don't.
+    Stripping keeps restore aligned with the workspace-relative layout used by
+    ``collect``/``apply`` regardless of which format the zip uses.
+    """
+    prefix = "agent/"
+    if filename.startswith(prefix):
+        return filename[len(prefix):]
+    return filename
+
+
+def _parse_backup_meta(stem: str):
+    """Parse a backup filename stem into ``(framework, name)``.
+
+    Filenames look like ``{fw}{delim}{name}_{date}_{time}``; the leading
+    ``{fw}{delim}{name}`` prefix is split on ``_`` (watch backups) or ``-``
+    (upload backups).
+    """
+    parts = stem.rsplit("_", 2)
+    prefix = parts[0] if len(parts) >= 3 else stem
+    delim = "_" if "_" in prefix else "-"
+    fw, _, nm = prefix.partition(delim)
+    return fw, nm
+
+
+def _filter_backups(backups, fw_filter, name_filter):
+    """Filter backup files by framework/name parsed from their filenames."""
+    if not (fw_filter or name_filter):
+        return backups
+    out = []
+    for f in backups:
+        fw, nm = _parse_backup_meta(f.stem)
+        if fw_filter and fw != fw_filter:
+            continue
+        if name_filter and nm != name_filter:
+            continue
+        out.append(f)
+    return out
 
 
 def cmd_recover(args) -> int:
@@ -643,23 +685,8 @@ def cmd_recover(args) -> int:
     # --list mode: enumerate backups and exit
     if args.list:
         # Filter by framework/name if provided (filename: {fw}_{name}_{date}_{time}.zip)
-        fw_filter = getattr(args, 'framework', None)
-        name_filter = getattr(args, 'name', None)
-        if fw_filter or name_filter:
-            filtered = []
-            for f in backups:
-                parts = f.stem.rsplit("_", 2)
-                prefix = parts[0] if len(parts) >= 3 else f.stem
-                delim = "_" if "_" in prefix else "-"
-                parts_fw = prefix.split(delim, 1)
-                fw = parts_fw[0]
-                name = parts_fw[1] if len(parts_fw) > 1 else ""
-                if fw_filter and fw != fw_filter:
-                    continue
-                if name_filter and name != name_filter:
-                    continue
-                filtered.append(f)
-            backups = filtered
+        backups = _filter_backups(
+            backups, getattr(args, 'framework', None), getattr(args, 'name', None))
 
         if not backups:
             print("No backups found.")
@@ -679,23 +706,8 @@ def cmd_recover(args) -> int:
         return _fail("specify a target: 'last' or a backup filename. Use --list to see available backups.")
 
     # Filter backups by framework/name if provided
-    fw_filter = getattr(args, 'framework', None)
-    name_filter = getattr(args, 'name', None)
-    if fw_filter or name_filter:
-        filtered = []
-        for f in backups:
-            parts = f.stem.rsplit("_", 2)
-            prefix = parts[0] if len(parts) >= 3 else f.stem
-            delim = "_" if "_" in prefix else "-"
-            parts_fw = prefix.split(delim, 1)
-            fw = parts_fw[0]
-            name = parts_fw[1] if len(parts_fw) > 1 else ""
-            if fw_filter and fw != fw_filter:
-                continue
-            if name_filter and name != name_filter:
-                continue
-            filtered.append(f)
-        backups = filtered
+    backups = _filter_backups(
+        backups, getattr(args, 'framework', None), getattr(args, 'name', None))
 
     # Resolve target to a zip path
     if target == "last":
@@ -743,11 +755,12 @@ def cmd_recover(args) -> int:
     else:
         print("No existing files to backup.")
 
-    # ---- Step 2: Determine which files are in the zip ----
+    # ---- Step 2: Determine which files are in the zip (strip legacy prefix) ----
     with zipfile.ZipFile(zip_path, "r") as zf:
-        zip_entries = set(
-            info.filename for info in zf.infolist() if not info.is_dir()
-        )
+        zip_entries = {
+            _strip_backup_wrapper(info.filename)
+            for info in zf.infolist() if not info.is_dir()
+        }
 
     # ---- Step 3: Delete local files that are NOT in the zip ----
     deleted = 0
@@ -767,13 +780,14 @@ def cmd_recover(args) -> int:
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            file_target = (resolved_root / info.filename).resolve()
+            rel = _strip_backup_wrapper(info.filename)
+            file_target = (resolved_root / rel).resolve()
             if not file_target.is_relative_to(resolved_root):
                 print(f"  Skipped (path traversal): {info.filename}")
                 continue
             file_target.parent.mkdir(parents=True, exist_ok=True)
             file_target.write_bytes(zf.read(info.filename))
-            print(f"  Restored: {info.filename}")
+            print(f"  Restored: {rel}")
             restored += 1
 
     print(f"\nRestored {restored} file(s), removed {deleted} extra file(s).")

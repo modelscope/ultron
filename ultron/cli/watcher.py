@@ -96,7 +96,11 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
         try:
             remote_files = client.list_repo_files_detail(username, repo)
         except ApiError as e:
-            if e.status in (404, 500):
+            # A non-existent remote repo returns 400 (code 10025801016), and
+            # 404/500 cover transient/unreadable states.  Treat all as an empty
+            # baseline so the first push can create the repo instead of looping
+            # forever (an empty-but-created repo returns 200 with a tree).
+            if e.status in (400, 404, 500):
                 remote_files = []
             else:
                 logger.error("Failed to list remote files: %s", e)

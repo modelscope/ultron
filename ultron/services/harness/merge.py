@@ -346,6 +346,16 @@ PRODUCT_FILE_CLASSES = {
         ]),
         "heartbeat": "HEARTBEAT.md",
     },
+    "ms-agent": {
+        # Only persona + memory carry cross-framework semantics; the
+        # config.yaml/settings.json/agent.yaml/facts.json/skill.json files are
+        # ms-agent specific and preserved on same-framework sync only.
+        "portable": frozenset([
+            "profile.md", "MEMORY.md",
+        ]),
+        "config": frozenset([]),
+        "heartbeat": "",
+    },
 }
 
 # Fallback for unknown products
@@ -380,11 +390,11 @@ SEMANTIC_GROUPS = [
      "openhuman": "USER.md"},
     # Long-term curated memory
     {"nanobot": "memory/MEMORY.md", "openclaw": "MEMORY.md",
-     "qwenpaw": "MEMORY.md", "openhuman": "MEMORY.md"},
+     "qwenpaw": "MEMORY.md", "openhuman": "MEMORY.md", "ms-agent": "MEMORY.md"},
     # Agent's own identity card
     {"openclaw": "IDENTITY.md", "openhuman": "IDENTITY.md"},
     # Combined identity + user profile (QwenPaw/OpenHuman concept)
-    {"qwenpaw": "PROFILE.md", "openhuman": "PROFILE.md"},
+    {"qwenpaw": "PROFILE.md", "openhuman": "PROFILE.md", "ms-agent": "profile.md"},
     # Workspace operating instructions
     {"nanobot": "AGENTS.md", "openclaw": "AGENTS.md", "qwenpaw": "AGENTS.md"},
     # Periodic task list
@@ -398,7 +408,7 @@ SEMANTIC_GROUPS = [
     {"nanobot": "memory/HISTORY.md"},
 ]
 
-_ALL_PRODUCTS = ["nanobot", "openclaw", "hermes", "qwenpaw", "openhuman"]
+_ALL_PRODUCTS = ["nanobot", "openclaw", "hermes", "qwenpaw", "openhuman", "ms-agent"]
 
 
 def _build_path_map():
@@ -436,6 +446,10 @@ PRODUCT_KNOWN_FILES = {
     "openhuman": frozenset([
         "SOUL.md", "IDENTITY.md", "USER.md", "PROFILE.md", "MEMORY.md",
         "HEARTBEAT.md",
+    ]),
+    "ms-agent": frozenset([
+        "profile.md", "MEMORY.md", "config.yaml", "settings.json",
+        "agent.yaml", "facts.json", "skill.json",
     ]),
 }
 
@@ -497,6 +511,12 @@ def _catch_all_file(product: str) -> str:
         return "AGENTS.md"
     if "AGENTS.md" in known:
         return "AGENTS.md"
+    if "SOUL.md" in known:
+        return "SOUL.md"
+    # Products without AGENTS.md/SOUL.md (e.g. ms-agent) fall back to their
+    # persona file so overflow lands in a file the harness actually loads.
+    if "profile.md" in known:
+        return "profile.md"
     return "SOUL.md"
 
 

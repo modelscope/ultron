@@ -154,6 +154,28 @@ class TestAllowlist(unittest.TestCase):
         self.assertIn("nanobot", ALLOWLIST_REGISTRY)
         self.assertIn("openclaw", ALLOWLIST_REGISTRY)
         self.assertIn("hermes", ALLOWLIST_REGISTRY)
+        self.assertIn("ms-agent", ALLOWLIST_REGISTRY)
+
+    def test_ms_agent_single_agent_layout(self):
+        """ms-agent is single-agent: no {name} placeholder, collects persona/
+        memory/skills/config under ~/.ms_agent."""
+        al = ALLOWLIST_REGISTRY["ms-agent"](local_dir=self.root)
+        self.assertEqual(al.product_name, "ms-agent")
+        # single-agent: no {name} placeholder in patterns
+        self.assertFalse(any("{name}" in p for p in al.patterns))
+        (self.root / "profile.md").write_text("p")
+        (self.root / "MEMORY.md").write_text("m")
+        (self.root / "facts.json").write_text("{}")
+        (self.root / "settings.json").write_text("{}")
+        (self.root / "skill.json").write_text("{}")
+        (self.root / "random.txt").write_text("x")
+        (self.root / "skills" / "foo").mkdir(parents=True)
+        (self.root / "skills" / "foo" / "SKILL.md").write_text("s")
+        got = al.collect()
+        for f in ("profile.md", "MEMORY.md", "facts.json", "settings.json",
+                  "skill.json", "skills/foo/SKILL.md"):
+            self.assertIn(f, got)
+        self.assertNotIn("random.txt", got)
 
 
 class TestAllPathPrefix(unittest.TestCase):

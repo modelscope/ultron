@@ -12,7 +12,6 @@ Endpoints:
 * ``POST /api/v1/repos/agents/{id}/info/lfs/objects/batch`` → LFS batch verify
 * ``DELETE /api/v1/agents/{path}/{name}/repo/file``        → delete file
 """
-import base64
 import hashlib
 import logging
 import os
