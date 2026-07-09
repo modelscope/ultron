@@ -33,11 +33,39 @@ class _DownloadStub:
         return self.STORE[file_path]
 
 
+class _QwenpawAllStub:
+    """Serves a qwenpaw all-mode repo (agent-prefixed paths) for convert tests."""
+
+    instances = []
+    STORE = {
+        ".gitattributes": "x",
+        "README.md": "readme",
+        "default/AGENTS.md": "# default agents",
+        "default/SOUL.md": "# default soul",
+        "bot-a/AGENTS.md": "# bot-a agents",
+        "bot-a/SOUL.md": "# bot-a soul",
+        "bot-a/PROFILE.md": "# bot-a profile",
+    }
+
+    def __init__(self, server, token=None, timeout=60):
+        _QwenpawAllStub.instances.append(self)
+
+    def repo_info(self, path, name):
+        return {"Path": path, "Name": name, "Framework": "qwenpaw", "Revision": 1}
+
+    def list_repo_files(self, path, name):
+        return list(self.STORE)
+
+    def download_repo_file(self, path, name, file_path):
+        return self.STORE[file_path]
+
+
 class TestDownload(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.out = Path(self.tmp.name) / "ws"
         _DownloadStub.instances = []
+        _QwenpawAllStub.instances = []
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -135,6 +163,55 @@ class TestDownload(unittest.TestCase):
         self.assertEqual(rc, 0)
         # Should still write files (stub doesn't care about group).
         self.assertTrue((self.out / "SOUL.md").is_file())
+
+    @mock.patch.object(commands.config, "resolve_username", return_value="u")
+    @mock.patch.object(commands.config, "resolve_token", return_value="tok")
+    @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
+    @mock.patch.object(commands, "UltronClient", _QwenpawAllStub)
+    def test_download_convert_all_root_to_root(self, *_):
+        """qwenpaw -> openclaw with --name all: per-agent convert + re-prefix."""
+        rc = _run([
+            "download", "--repo", "qw", "--framework", "qwenpaw",
+            "--name", "all", "--target", "openclaw", "--local_dir", str(self.out),
+        ])
+        self.assertEqual(rc, 0)
+        # default -> workspace/, bot-a -> workspace-bot-a/ (openclaw convention)
+        self.assertTrue((self.out / "workspace" / "AGENTS.md").is_file())
+        self.assertTrue((self.out / "workspace-bot-a" / "AGENTS.md").is_file())
+        self.assertTrue((self.out / "workspace-bot-a" / "SOUL.md").is_file())
+        # qwenpaw-only PROFILE.md has no openclaw equivalent: must NOT land as-is.
+        self.assertFalse((self.out / "workspace-bot-a" / "PROFILE.md").exists())
+        # top-level non-agent files (README) are dropped, never mis-prefixed.
+        self.assertFalse((self.out / "README.md").exists())
+
+    @mock.patch.object(commands.config, "resolve_username", return_value="u")
+    @mock.patch.object(commands.config, "resolve_token", return_value="tok")
+    @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
+    @mock.patch.object(commands, "UltronClient", _QwenpawAllStub)
+    def test_download_convert_all_cross_layout_rejected(self, *_):
+        """qwenpaw -> qoder with --name all is cross-layout: must be rejected."""
+        rc = _run([
+            "download", "--repo", "qw", "--framework", "qwenpaw",
+            "--name", "all", "--target", "qoder", "--local_dir", str(self.out),
+        ])
+        self.assertEqual(rc, 1)
+
+    @mock.patch.object(commands.config, "resolve_username", return_value="u")
+    @mock.patch.object(commands.config, "resolve_token", return_value="tok")
+    @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
+    @mock.patch.object(commands, "UltronClient", _QwenpawAllStub)
+    def test_download_all_same_framework_keeps_prefixed_paths(self, *_):
+        """qwenpaw -> qwenpaw with --name all: no convert, agent prefixes kept."""
+        rc = _run([
+            "download", "--repo", "qw", "--framework", "qwenpaw",
+            "--name", "all", "--local_dir", str(self.out),
+        ])
+        self.assertEqual(rc, 0)
+        self.assertTrue((self.out / "default" / "AGENTS.md").is_file())
+        self.assertTrue((self.out / "bot-a" / "AGENTS.md").is_file())
+        self.assertTrue((self.out / "bot-a" / "PROFILE.md").is_file())
+        # non-spec top-level files are skipped.
+        self.assertFalse((self.out / "README.md").exists())
 
 
 class TestConvert(unittest.TestCase):

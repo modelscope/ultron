@@ -82,10 +82,13 @@ def _resolve_local_name(name: Optional[str], framework: str, local_dir=None):
 
     Returns (resolved_name, error_message).
     - If name is given → use it directly.
-    - If omitted → check list_agents():
-      - 0 or only 'default' → use GLOBAL_AGENT_NAME (shared files only)
-      - exactly 1 non-default agent → auto-select it
-      - multiple → return error
+    - If omitted:
+      - root-per-agent / single-agent layout (no ``{name}`` placeholder) →
+        always DEFAULT_AGENT_NAME.  'default' is a real workspace directory, so
+        sibling sub-agents never trigger auto-select or an error.
+      - file-per-agent+shared layout (patterns use ``{name}``) → inspect the
+        ``agents/`` files: exactly 1 non-default → auto-select it; 0 →
+        GLOBAL_AGENT_NAME (shared files only); multiple → error.
     """
     if name:
         return name, None
@@ -94,15 +97,20 @@ def _resolve_local_name(name: Optional[str], framework: str, local_dir=None):
     spec_cls = ALLOWLIST_REGISTRY[framework]
     local = Path(local_dir).expanduser() if local_dir else None
     tmp_spec = spec_cls(agent_name=DEFAULT_AGENT_NAME, local_dir=local)
+
+    # root-per-agent / single-agent: an omitted --name always means the default
+    # agent.  Only layouts with a ``{name}`` placeholder (file-per-agent+shared)
+    # have a meaningful shared/global mode or per-agent auto-selection.
+    has_shared_mode = any("{name}" in p for p in tmp_spec.patterns)
+    if not has_shared_mode:
+        return DEFAULT_AGENT_NAME, None
+
     agents = tmp_spec.list_agents()
-
-    # Filter out "default" to find real sub-agents.
     real_agents = [a for a in agents if a != DEFAULT_AGENT_NAME]
-
-    if len(real_agents) == 0:
-        return GLOBAL_AGENT_NAME, None
     if len(real_agents) == 1:
         return real_agents[0], None
+    if len(real_agents) == 0:
+        return GLOBAL_AGENT_NAME, None
     return None, (
         f"multiple sub-agents found: {', '.join(agents)}. "
         f"Please specify --name to select one."
@@ -142,15 +150,23 @@ def _build_allowlist(framework: str, name: str, local_dir):
     return spec_cls(agent_name=name, local_dir=local)
 
 
-def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
+def _convert(resources: dict, source_fw: str, target_fw: str,
+             *, all_mode: bool = False, src_spec=None, dst_spec=None) -> dict:
     """Convert workspace resources from one framework's format to another.
 
     Reuses the server-side cross-product migration (``merge_resources``), so the
     output paths follow the target framework's conventions. A no-op when source
     and target are the same.
+
+    When *all_mode* is True (root-per-agent -> root-per-agent), paths carry an
+    agent prefix; each agent is split out, converted independently as a single
+    agent, then re-prefixed for the target framework.  Requires *src_spec* and
+    *dst_spec*.
     """
     if source_fw == target_fw:
         return resources
+    if all_mode:
+        return _convert_all(resources, source_fw, target_fw, src_spec, dst_spec)
     result = merge_resources(
         incoming=resources,
         source_product=source_fw,
@@ -159,6 +175,37 @@ def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
         target_defaults=get_defaults(target_fw),
     )
     return result.merged_files
+
+
+def _convert_all(resources: dict, source_fw: str, target_fw: str, src_spec, dst_spec) -> dict:
+    """All-mode cross-framework convert (root-per-agent -> root-per-agent).
+
+    Group incoming files by their source agent prefix, convert each agent as an
+    isolated single-agent workspace, then re-prefix the results using the target
+    framework's convention.  Top-level files without an agent prefix (e.g.
+    README.md) belong to no agent and are dropped.
+    """
+    groups: dict = {}
+    for path, content in resources.items():
+        agent, bare = src_spec.split_all_path(path)
+        if agent is None:
+            continue
+        groups.setdefault(agent, {})[bare] = content
+
+    src_defaults = get_defaults(source_fw)
+    tgt_defaults = get_defaults(target_fw)
+    out: dict = {}
+    for agent, bare_files in groups.items():
+        result = merge_resources(
+            incoming=bare_files,
+            source_product=source_fw,
+            target_product=target_fw,
+            source_defaults=src_defaults,
+            target_defaults=tgt_defaults,
+        )
+        for bare_path, content in result.merged_files.items():
+            out[dst_spec.join_all_path(agent, bare_path)] = content
+    return out
 
 
 def cmd_list(args) -> int:
@@ -345,14 +392,30 @@ def cmd_download(args) -> int:
     target_fw = args.target or framework
     if target_fw not in ALLOWLIST_REGISTRY:
         return _fail(f"unknown target framework '{target_fw}'. Available: {_frameworks()}")
-    if target_fw != framework:
-        resources = _convert(resources, framework, target_fw)
-        print(f"Converted {framework} -> {target_fw} ({len(resources)} file(s)).")
 
     # Resolve local agent name for writing.
     local_name = args.name or DEFAULT_AGENT_NAME
     spec = _build_allowlist(target_fw, local_name, args.local_dir)
     root = spec.workspace_root
+
+    if target_fw != framework:
+        if args.name == ALL_AGENT_NAME:
+            # All-mode conversion only makes sense between two root-per-agent
+            # frameworks (1:1 agent-directory mapping); other layouts (e.g.
+            # file-per-agent qoder, single-agent) collapse N agents into a
+            # shared root, which is lossy and ambiguous -- reject explicitly.
+            src_spec = _build_allowlist(framework, local_name, args.local_dir)
+            if not (src_spec.is_root_per_agent and spec.is_root_per_agent):
+                return _fail(
+                    "cross-framework conversion with --name all is only supported "
+                    "between root-per-agent frameworks (e.g. qwenpaw <-> openclaw). "
+                    "For other layouts, convert one agent at a time: "
+                    "-n <agent> --target <fw>.")
+            resources = _convert(resources, framework, target_fw,
+                                 all_mode=True, src_spec=src_spec, dst_spec=spec)
+        else:
+            resources = _convert(resources, framework, target_fw)
+        print(f"Converted {framework} -> {target_fw} ({len(resources)} file(s)).")
 
     # Filter downloaded resources by allowlist patterns.
     patterns = spec.resolved_patterns()

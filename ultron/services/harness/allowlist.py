@@ -111,6 +111,34 @@ class ClawWorkspaceAllowlist(ABC):
         return self.patterns
 
     # ------------------------------------------------------------------
+    # All-mode path prefixing (for cross-framework conversion)
+    # ------------------------------------------------------------------
+
+    @property
+    def is_root_per_agent(self) -> bool:
+        """Whether sub-agents are separate directories (root-per-agent layout).
+
+        All-mode cross-framework conversion is only well-defined between two
+        root-per-agent frameworks, where every agent maps 1:1 to a directory
+        prefix.  Other layouts return ``False``.
+        """
+        return False
+
+    def split_all_path(self, rel_path: str) -> Tuple[Optional[str], str]:
+        """Split an all-mode path into ``(agent_name, bare_path)``.
+
+        ``bare_path`` is the path relative to a single agent's root.  Returns
+        ``(None, rel_path)`` when the path has no recognizable agent prefix
+        (e.g. top-level ``README.md``).  Root-per-agent classes override this.
+        """
+        return (None, rel_path)
+
+    def join_all_path(self, agent_name: str, bare_path: str) -> str:
+        """Inverse of :meth:`split_all_path`: build this framework's all-mode
+        path for *agent_name* + *bare_path*."""
+        return bare_path
+
+    # ------------------------------------------------------------------
     # Core helpers
     # ------------------------------------------------------------------
 
@@ -314,6 +342,26 @@ class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
             return [f"workspace*/{p}" for p in self.patterns]
         return self.patterns
 
+    @property
+    def is_root_per_agent(self) -> bool:
+        return True
+
+    def split_all_path(self, rel_path: str) -> Tuple[Optional[str], str]:
+        # agent lives in ``workspace/`` (default) or ``workspace-<name>/``.
+        if "/" not in rel_path:
+            return (None, rel_path)
+        head, rest = rel_path.split("/", 1)
+        if head == "workspace":
+            return (DEFAULT_AGENT_NAME, rest)
+        if head.startswith("workspace-"):
+            return (head[len("workspace-"):], rest)
+        return (None, rel_path)
+
+    def join_all_path(self, agent_name: str, bare_path: str) -> str:
+        if agent_name in ("", DEFAULT_AGENT_NAME):
+            return f"workspace/{bare_path}"
+        return f"workspace-{agent_name}/{bare_path}"
+
     def list_agents(self) -> List[str]:
         base = Path.home() / ".openclaw"
         agents: List[str] = []
@@ -395,6 +443,20 @@ class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
         if self._is_all():
             return [f"*/{p}" for p in self.patterns]
         return self.patterns
+
+    @property
+    def is_root_per_agent(self) -> bool:
+        return True
+
+    def split_all_path(self, rel_path: str) -> Tuple[Optional[str], str]:
+        # agent directory name IS the agent name: ``<agent>/<bare>``.
+        if "/" in rel_path:
+            head, rest = rel_path.split("/", 1)
+            return (head, rest)
+        return (None, rel_path)
+
+    def join_all_path(self, agent_name: str, bare_path: str) -> str:
+        return f"{agent_name}/{bare_path}"
 
     def list_agents(self) -> List[str]:
         base = Path.home() / ".qwenpaw" / "workspaces"
