@@ -259,6 +259,35 @@ class TestConvert(unittest.TestCase):
         ])
         self.assertEqual(rc, 1)
 
+    def test_convert_qwenpaw_to_qoder_persona_lands_in_agents_file(self):
+        """file-per-agent target: -n routes persona to agents/{name}.md.
+
+        qwenpaw SOUL/PROFILE have no shared mapping on qoder, so they must be
+        routed to the per-agent file agents/bot-a.md rather than polluting the
+        shared AGENTS.md.
+        """
+        src = Path(self.tmp.name) / "qp"
+        out = Path(self.tmp.name) / "qo"
+        src.mkdir(parents=True)
+        (src / "SOUL.md").write_text("# Soul\nQP_SOUL_IDENTITY.\n")
+        (src / "PROFILE.md").write_text("# Profile\nQP_PROFILE_MARKER.\n")
+        (src / "AGENTS.md").write_text("# Agents\nSHARED_QP_AGENTS.\n")
+        rc = _run([
+            "convert", "--from", "qwenpaw", "--to", "qoder", "-n", "bot-a",
+            "--local_dir", str(src), "--out-dir", str(out),
+        ])
+        self.assertEqual(rc, 0)
+        agent_file = out / "agents" / "bot-a.md"
+        self.assertTrue(agent_file.is_file(),
+                        "persona must land in agents/bot-a.md")
+        body = agent_file.read_text()
+        self.assertIn("QP_SOUL_IDENTITY.", body)
+        self.assertIn("QP_PROFILE_MARKER.", body)
+        shared = out / "AGENTS.md"
+        if shared.is_file():
+            self.assertNotIn("QP_SOUL_IDENTITY.", shared.read_text(),
+                             "shared AGENTS.md must stay free of per-agent identity")
+
 
 if __name__ == "__main__":
     unittest.main()
