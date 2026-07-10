@@ -208,6 +208,18 @@ class TestResolveTargetPath(unittest.TestCase):
         self.assertEqual(_resolve_target_path("openhuman", "MEMORY.md", "qwenpaw"), "MEMORY.md")
         self.assertEqual(_resolve_target_path("qwenpaw", "MEMORY.md", "nanobot"), "memory/MEMORY.md")
 
+    def test_ms_agent_profile(self):
+        # ms-agent profile.md <-> qwenpaw/openhuman PROFILE.md (persona group)
+        self.assertEqual(_resolve_target_path("ms-agent", "profile.md", "qwenpaw"), "PROFILE.md")
+        self.assertEqual(_resolve_target_path("qwenpaw", "PROFILE.md", "ms-agent"), "profile.md")
+        # nanobot has no PROFILE concept
+        self.assertIsNone(_resolve_target_path("ms-agent", "profile.md", "nanobot"))
+
+    def test_ms_agent_memory(self):
+        self.assertEqual(_resolve_target_path("ms-agent", "MEMORY.md", "openclaw"), "MEMORY.md")
+        self.assertEqual(_resolve_target_path("openclaw", "MEMORY.md", "ms-agent"), "MEMORY.md")
+        self.assertEqual(_resolve_target_path("ms-agent", "MEMORY.md", "nanobot"), "memory/MEMORY.md")
+
 
 class TestMergeResources(unittest.TestCase):
     def test_same_product_imports_directly(self):

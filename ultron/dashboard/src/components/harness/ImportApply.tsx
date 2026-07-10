@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useLocale } from '../../contexts/LocaleContext';
 import HarnessIoBlurb from './HarnessIoBlurb';
 
-const PRODUCTS = ['nanobot', 'openclaw', 'hermes', 'qwenpaw', 'openhuman'];
+const PRODUCTS = ['nanobot', 'openclaw', 'hermes', 'qwenpaw', 'openhuman', 'ms-agent'];
 
 export default function ImportApply({ onImported }: { onImported?: () => void }) {
   const { t } = useLocale();

@@ -26,6 +26,7 @@ from ultron.api.schemas import (
     CreateRepoRequest,
     LfsBatchRequest,
 )
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/v1", tags=["repo"])
 
@@ -86,10 +87,11 @@ async def create_repo(
     if existing:
         raise HTTPException(status_code=409, detail="Repository already exists")
     # Initialize an empty profile carrying the framework/product.
+    product = request.Framework or "nanobot"
     data = u.harness_sync_up(
         user_id=request.Path,
         agent_id=request.Name,
-        product=request.Framework,
+        product=product,
         resources={},
     )
     return {
@@ -97,8 +99,7 @@ async def create_repo(
         "data": {
             "Path": request.Path,
             "Name": request.Name,
-            "Framework": request.Framework,
-            "Visibility": request.Visibility,
+            "Framework": product,
             "Revision": data.get("revision"),
         },
     }
@@ -128,10 +129,11 @@ async def lfs_batch(
 # ---- 3.2 Commit files ----
 
 
-@router.post("/repos/agents/{path}/{name}/commit/master")
+@router.post("/repos/agents/{path}/{name}/commit/{revision}")
 async def commit_repo(
     path: str,
     name: str,
+    revision: str,
     request: CommitRequest,
     user: dict = Depends(get_current_user),
 ):
@@ -145,7 +147,7 @@ async def commit_repo(
         if action.action == "delete":
             resources.pop(action.path, None)
             continue
-        if action.action != "update":
+        if action.action not in ("create", "update"):
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported action '{action.action}' for {action.path}",
@@ -185,6 +187,42 @@ async def commit_repo(
 
 
 # ---- 4.1 List repository files ----
+
+
+class DeleteFileRequest(BaseModel):
+    branch: str = Field("master", description="Branch name")
+    file_path: str = Field(..., description="File path to delete")
+    commit_message: str = Field("", description="Commit message")
+
+
+@router.delete("/agents/{path}/{name}/repo/file")
+async def delete_repo_file(
+    path: str,
+    name: str,
+    request: DeleteFileRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Delete a single file from the repo."""
+    _ensure_owner(path, user)
+    u = _ultron()
+    profile = _get_profile_or_404(u, path, name)
+    resources = dict(profile.get("resources", {}))
+    product = profile.get("product", "nanobot")
+
+    if request.file_path not in resources:
+        raise HTTPException(status_code=404, detail=f"File not found: {request.file_path}")
+
+    resources.pop(request.file_path)
+    u.harness_sync_up(
+        user_id=path, agent_id=name, product=product, resources=resources
+    )
+    return {
+        "success": True,
+        "data": {
+            "deleted": request.file_path,
+            "files": len(resources),
+        },
+    }
 
 
 @router.get("/agents/{path}/{name}/repo/files")

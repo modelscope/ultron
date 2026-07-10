@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 from typing import List, Optional
 
 from .cache import load_sync_state, log_file, pid_file, save_sync_state, stop_file
-from .client import ApiError
+from .client import ApiError, UltronClient
 from .sync import (
     backup_local,
     detect_local_changes,
@@ -46,6 +46,12 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
                    False = full bidirectional sync (remote wins on conflict).
     """
     logger = _get_logger()
+
+    # The daemon runs in a freshly exec'd interpreter, but watch_loop may also
+    # be invoked directly (tests / foreground).  Rebuild the client so we always
+    # start with a clean requests.Session connection pool.
+    client = UltronClient(client.server, client.token, client.timeout)
+
     logger.info("Watch started for %s/%s (root=%s, interval=%ds, push_only=%s)",
                 username, repo, spec.workspace_root, interval, push_only)
 
@@ -90,7 +96,11 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
         try:
             remote_files = client.list_repo_files_detail(username, repo)
         except ApiError as e:
-            if e.status in (404, 500):
+            # A non-existent remote repo returns 400 (code 10025801016), and
+            # 404/500 cover transient/unreadable states.  Treat all as an empty
+            # baseline so the first push can create the repo instead of looping
+            # forever (an empty-but-created repo returns 200 with a tree).
+            if e.status in (400, 404, 500):
                 remote_files = []
             else:
                 logger.error("Failed to list remote files: %s", e)
@@ -102,8 +112,7 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
         remote_sha_map = {f.path: f.sha256 for f in remote_files if f.path in scope}
 
         remote_changed = (
-            max((f.committed_date for f in remote_files), default=0) > state["last_commit_date"]
-            or set(remote_sha_map.keys()) != set(state.get("remote_files", {}).keys())
+            remote_sha_map != state.get("remote_files", {})
         )
         local_changed = bool(detect_local_changes(local_resources, state["remote_files"]))
 
@@ -134,7 +143,7 @@ def watch_loop(spec, client, username: str, repo: str, framework: str, interval:
     sf.unlink(missing_ok=True)
 
 
-def _push_local(client, username, name, framework, local_resources, state, logger) -> bool:
+def _push_local(client, username, name, framework, local_resources, state, logger, *, remote_paths=None, remote_lfs_paths=None) -> bool:
     """Push local changes: full upload on first time, incremental thereafter.
 
     Returns True if something was actually pushed, False otherwise.
@@ -149,7 +158,24 @@ def _push_local(client, username, name, framework, local_resources, state, logge
     else:
         changed = detect_local_changes(local_resources, state["remote_files"])
         if changed:
-            push_incremental(client, username, name, changed, set(state["remote_files"].keys()))
+            # Filter stale DELETEs: only delete files that actually exist on
+            # the remote.  The baseline may be stale if the remote was
+            # modified outside watch (e.g. via upload or manual deletion).
+            if remote_paths is not None:
+                stale = {
+                    p for p, c in changed.items()
+                    if c is None and p not in remote_paths
+                }
+                for p in sorted(stale):
+                    logger.warning("  SKIP DELETE: %s (not on remote, stale baseline)", p)
+                    del changed[p]
+            if not changed:
+                logger.info("No real changes to push after filtering stale deletes.")
+                return False
+            # Use actual remote paths (not stale baseline) for CREATE vs UPDATE.
+            actual = remote_paths if remote_paths is not None else set(state["remote_files"].keys())
+            push_incremental(client, username, name, changed, actual,
+                             remote_lfs_paths=remote_lfs_paths)
             logger.info("Pushed local changes (incremental commit).")
             return True
         return False
@@ -162,10 +188,14 @@ def _sync_action(
     state,
 ) -> bool:
     """Execute the appropriate sync action. Returns True if something changed."""
+    remote_paths = {f.path for f in remote_files}
+    remote_lfs_paths = {f.path for f in remote_files if getattr(f, 'is_lfs', False)}
+
     if push_only:
         if not local_changed:
             return False
-        return _push_local(client, username, name, framework, local_resources, state, logger)
+        return _push_local(client, username, name, framework, local_resources, state, logger,
+                           remote_paths=remote_paths, remote_lfs_paths=remote_lfs_paths)
 
     if remote_changed and local_changed:
         backup_path = backup_local(spec, name)
@@ -176,7 +206,8 @@ def _sync_action(
         pull_incremental(client, username, name, spec, remote_files, local_resources)
         logger.info("Pulled remote changes (backup: %s).", backup_path)
     elif local_changed:
-        _push_local(client, username, name, framework, local_resources, state, logger)
+        _push_local(client, username, name, framework, local_resources, state, logger,
+                    remote_paths=remote_paths, remote_lfs_paths=remote_lfs_paths)
     else:
         return False
     return True
@@ -207,64 +238,24 @@ def _refresh_baseline(client, username: str, name: str, local_resources: dict, s
 
 
 def daemonize(target, *args, **kwargs):
-    """Launch *target* as a background process.
+    """Launch the watch loop as a fresh background process (fork + exec).
 
-    Unix: classic double-fork.
-    Windows: subprocess.Popen with DETACHED_PROCESS.
-    """
-    if hasattr(os, "fork"):
-        _daemonize_unix(target, *args, **kwargs)
-    else:
-        _daemonize_windows(target, *args, **kwargs)
-
-
-def _daemonize_unix(target, *args, **kwargs):
-    """Double-fork daemon (Unix only)."""
-    pf = pid_file()
-
-    pid = os.fork()
-    if pid > 0:
-        return  # Parent returns immediately.
-
-    os.setsid()
-
-    pid = os.fork()
-    if pid > 0:
-        os._exit(0)  # First child exits; grandchild is the actual daemon.
-
-    # Grandchild: write PID and redirect stdio.
-    pf.write_text(str(os.getpid()), encoding="utf-8")
-
-    sys.stdout.flush()
-    sys.stderr.flush()
-    with open(os.devnull, "r") as devnull:
-        os.dup2(devnull.fileno(), sys.stdin.fileno())
-    log_fd = os.open(str(log_file()), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-    os.dup2(log_fd, sys.stdout.fileno())
-    os.dup2(log_fd, sys.stderr.fileno())
-    os.close(log_fd)
-
-    try:
-        target(*args, **kwargs)
-    finally:
-        pf.unlink(missing_ok=True)
-        os._exit(0)
-
-
-def _daemonize_windows(target, *args, **kwargs):
-    """Spawn a detached background process (Windows).
-
-    Re-launches Python with ``ultron _watch_daemon`` internal command,
-    passing serialized arguments via a temp JSON file.
+    Spawns a brand-new Python interpreter running the ``_watch_daemon`` entry
+    point on ALL platforms.  Using exec (rather than a bare ``os.fork()``)
+    guarantees the daemon starts from a clean process image.  This is essential
+    on macOS, where calling into system frameworks (e.g. ``_scproxy`` /
+    ``SystemConfiguration`` for proxy detection during an HTTPS request) inside
+    a fork-without-exec child crashes with SIGSEGV.  It also avoids stale file
+    descriptors inherited from the parent's connection pool.
     """
     import json
     import tempfile
 
-    # Serialize the arguments that watch_loop needs.
-    # spec (args[0]) carries the agent_name used to build the allowlist scope.
+    # spec (args[0]) carries the agent_name/local_dir used to build the scope.
     # client (args[1]) carries server/token for the child process.
     spec_obj = args[0] if len(args) > 0 else None
     client_obj = args[1] if len(args) > 1 else None
+    local_dir = getattr(spec_obj, "_local_dir", None) if spec_obj else None
     payload = {
         "username": args[2] if len(args) > 2 else kwargs.get("username", ""),
         "repo": args[3] if len(args) > 3 else kwargs.get("repo", ""),
@@ -272,28 +263,46 @@ def _daemonize_windows(target, *args, **kwargs):
         "interval": args[5] if len(args) > 5 else kwargs.get("interval", 120),
         "push_only": kwargs.get("push_only", True),
         "local_name": getattr(spec_obj, "agent_name", "") if spec_obj else "",
+        "local_dir": str(local_dir) if local_dir else "",
         "server": getattr(client_obj, "server", "") if client_obj else "",
         "token": getattr(client_obj, "token", "") if client_obj else "",
-        # spec and client are rebuilt in the child from stored config.
     }
-    # Write to a temp file that the child will read and delete.
     fd, param_path = tempfile.mkstemp(suffix=".json", prefix="ultron_watch_")
     with os.fdopen(fd, "w") as f:
         json.dump(payload, f)
 
-    # Launch detached subprocess.
-    CREATE_NO_WINDOW = 0x08000000
-    DETACHED_PROCESS = 0x00000008
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "ultron.cli", "_watch_daemon", param_path],
-        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
-        close_fds=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-    )
-    # Write PID file.
+    cmd = [sys.executable, "-m", "ultron.cli", "_watch_daemon", param_path]
     pf = pid_file()
+
+    if hasattr(os, "fork"):
+        # Unix: detach into a new session (setsid equivalent) and redirect the
+        # daemon's stdio to the log file so tracebacks are never lost.
+        lf = log_file()
+        lf.parent.mkdir(parents=True, exist_ok=True)
+        log_fd = os.open(str(lf), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                start_new_session=True,
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=log_fd,
+                stderr=log_fd,
+            )
+        finally:
+            os.close(log_fd)
+    else:
+        CREATE_NO_WINDOW = 0x08000000
+        DETACHED_PROCESS = 0x00000008
+        proc = subprocess.Popen(
+            cmd,
+            creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+            close_fds=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+
     pf.write_text(str(proc.pid), encoding="utf-8")
 
 

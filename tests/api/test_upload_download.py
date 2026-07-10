@@ -34,7 +34,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from ultron.cli.client import ApiError, UltronClient
-from ultron.cli.commands import cmd_download, cmd_list, cmd_upload, _repo_name
+from ultron.cli.commands import cmd_download, cmd_status, cmd_upload, _repo_name
 from ultron.cli import config as cli_config
 from ultron.services.harness.allowlist import (
     ALL_AGENT_NAME,
@@ -44,7 +44,7 @@ from ultron.services.harness.allowlist import (
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-SERVER = os.environ.get("SERVER", "http://pre.modelscope.cn")
+SERVER = os.environ.get("SERVER", "http://www.modelscope.cn")
 TOKEN = os.environ.get("TOKEN", "")
 AGENT_PREFIX = "test-updown"
 
@@ -92,8 +92,6 @@ QODER_ALL_FILES = {
 NANOBOT_ALL_FILES = {
     "AGENTS.md": "# Agents\n",
     "SOUL.md": "# Soul\nI am nanobot.\n",
-    "agents/helper.md": "# Helper\nA helper sub-agent.\n",
-    "agents/writer.md": "# Writer\nA writer sub-agent.\n",
     "memory/MEMORY.md": "# Memory\n",
     "skills/search/SKILL.md": "# Search\nWeb search.\n",
 }
@@ -280,11 +278,11 @@ class TestUploadDownload(unittest.TestCase):
     # 06. List: list sub-agents
     # -----------------------------------------------------------------------
     def test_06_upload_list(self):
-        """cmd_list should enumerate sub-agents on disk and return 0."""
+        """cmd_status should enumerate sub-agents on disk and return 0."""
         local = self._create_local_workspace(QODER_ALL_FILES)
         try:
             args = SimpleNamespace(framework="qoder", local_dir=local)
-            rc = cmd_list(args)
+            rc = cmd_status(args)
             self.assertEqual(rc, 0)
         finally:
             self._cleanup_dir(local)
@@ -329,10 +327,10 @@ class TestUploadDownload(unittest.TestCase):
             self._cleanup_dir(local)
 
     # -----------------------------------------------------------------------
-    # 10. Upload: nanobot all mode (file-per-agent + shared)
+    # 10. Upload: nanobot all mode (single-agent -> full workspace)
     # -----------------------------------------------------------------------
     def test_10_upload_all_nanobot(self):
-        """Upload all nanobot sub-agents at once."""
+        """Upload the whole nanobot workspace in all mode."""
         local = self._create_local_workspace(NANOBOT_ALL_FILES)
         try:
             args = self._upload_args("nanobot", ALL_AGENT_NAME, local_dir=local)
@@ -463,7 +461,7 @@ class TestUploadDownload(unittest.TestCase):
         _wait(5)
 
         # Verify via client API
-        server_files = self.client.list_repo_files(self.username, agent_name)
+        server_files = self.client.list_repo_files(self.username, _repo_name("qoder", agent_name))
         uploaded_keys = set(files.keys())
         server_set = set(server_files)
         missing = uploaded_keys - server_set
@@ -472,7 +470,7 @@ class TestUploadDownload(unittest.TestCase):
         # Download and verify content
         for rel, expected in files.items():
             if rel in server_set:
-                actual = self.client.download_repo_file(self.username, agent_name, rel)
+                actual = self.client.download_repo_file(self.username, _repo_name("qoder", agent_name), rel)
                 self.assertEqual(actual.strip(), expected.strip(),
                                  f"content mismatch for {rel}")
 
@@ -590,7 +588,7 @@ class TestUploadDownload(unittest.TestCase):
         _wait(5)
 
         # Verify V2 content
-        content = self.client.download_repo_file(self.username, agent_name, "AGENTS.md")
+        content = self.client.download_repo_file(self.username, _repo_name("qoder", agent_name), "AGENTS.md")
         self.assertIn("V2", content)
         self.assertIn("Modified", content)
 
@@ -625,7 +623,7 @@ class TestUploadDownload(unittest.TestCase):
                 if fw == "qoder":
                     files = {"AGENTS.md": "# Agents\n", f"agents/{agent_name}.md": "# X\n"}
                 elif fw == "nanobot":
-                    files = {"SOUL.md": "# Soul\n", f"agents/{agent_name}.md": "# X\n"}
+                    files = {"SOUL.md": "# Soul\n"}
                 elif fw == "openclaw":
                     files = {"SOUL.md": "# Soul\n", "IDENTITY.md": "# ID\n"}
                 elif fw == "qwenpaw":
@@ -633,7 +631,9 @@ class TestUploadDownload(unittest.TestCase):
                 elif fw == "hermes":
                     files = {"SOUL.md": "# Soul\n"}
                 elif fw == "openhuman":
-                    files = {"SOUL.md": "# Soul\n", "IDENTITY.md": "# ID\n"}
+                    files = {"wiki/identity.md": "# Identity\n"}
+                elif fw == "ms-agent":
+                    files = {"profile.md": "# Profile\n", "MEMORY.md": "# Memory\n"}
                 else:
                     files = {"SOUL.md": "# Soul\n"}
                 local = self._create_local_workspace(files)
@@ -777,18 +777,23 @@ class TestUploadDownload(unittest.TestCase):
     # 30. supports_individual_watch property check
     # -----------------------------------------------------------------------
     def test_30_supports_individual_watch(self):
-        """Verify file-per-agent frameworks disallow individual watch."""
+        """Only file-per-agent + shared frameworks (qoder) disallow individual watch."""
         qoder = ALLOWLIST_REGISTRY["qoder"](agent_name="reviewer")
         nanobot = ALLOWLIST_REGISTRY["nanobot"](agent_name="helper")
         qwenpaw = ALLOWLIST_REGISTRY["qwenpaw"](agent_name="bot-a")
         openclaw = ALLOWLIST_REGISTRY["openclaw"](agent_name="helper")
         hermes = ALLOWLIST_REGISTRY["hermes"](agent_name="default")
+        ms_agent = ALLOWLIST_REGISTRY["ms-agent"](agent_name="default")
 
+        # file-per-agent + shared: shared files cascade, individual watch unsupported
         self.assertFalse(qoder.supports_individual_watch)
-        self.assertFalse(nanobot.supports_individual_watch)
+        # single-agent installs: the whole workspace is the one agent
+        self.assertTrue(nanobot.supports_individual_watch)
+        self.assertTrue(hermes.supports_individual_watch)
+        self.assertTrue(ms_agent.supports_individual_watch)
+        # root-per-agent: each agent is its own directory
         self.assertTrue(qwenpaw.supports_individual_watch)
         self.assertTrue(openclaw.supports_individual_watch)
-        self.assertTrue(hermes.supports_individual_watch)
 
 
 if __name__ == "__main__":

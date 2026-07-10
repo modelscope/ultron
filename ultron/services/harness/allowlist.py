@@ -19,9 +19,10 @@ A single installation can host several sub-agents. There are three layouts:
 * **file-per-agent + shared** -- the sub-agent is one file inside a shared root,
   collected alongside the shared resources; a ``{name}`` placeholder in
   ``patterns`` is formatted with the sub-agent name so only the selected agent's
-  file matches (qoder ``agents/<name>.md``, nanobot).
+  file matches (qoder ``agents/<name>.md``).
 * **single-agent** -- one persona per install; the sub-agent name is only the
-  repository identity and does not affect file selection (hermes, openhuman).
+  repository identity and does not affect file selection (hermes, openhuman,
+  nanobot, ms-agent).
 
 The dashboard re-implements the same root/pattern logic in TypeScript
 (``ultron/dashboard/src/components/harness/UploadWorkspace.tsx``); keep the two
@@ -109,6 +110,34 @@ class ClawWorkspaceAllowlist(ABC):
         """Patterns to match against.  Root-per-agent classes override this to
         add an agent-name prefix in all mode."""
         return self.patterns
+
+    # ------------------------------------------------------------------
+    # All-mode path prefixing (for cross-framework conversion)
+    # ------------------------------------------------------------------
+
+    @property
+    def is_root_per_agent(self) -> bool:
+        """Whether sub-agents are separate directories (root-per-agent layout).
+
+        All-mode cross-framework conversion is only well-defined between two
+        root-per-agent frameworks, where every agent maps 1:1 to a directory
+        prefix.  Other layouts return ``False``.
+        """
+        return False
+
+    def split_all_path(self, rel_path: str) -> Tuple[Optional[str], str]:
+        """Split an all-mode path into ``(agent_name, bare_path)``.
+
+        ``bare_path`` is the path relative to a single agent's root.  Returns
+        ``(None, rel_path)`` when the path has no recognizable agent prefix
+        (e.g. top-level ``README.md``).  Root-per-agent classes override this.
+        """
+        return (None, rel_path)
+
+    def join_all_path(self, agent_name: str, bare_path: str) -> str:
+        """Inverse of :meth:`split_all_path`: build this framework's all-mode
+        path for *agent_name* + *bare_path*."""
+        return bare_path
 
     # ------------------------------------------------------------------
     # Core helpers
@@ -230,15 +259,16 @@ class ClawWorkspaceAllowlist(ABC):
 
 
 class NanobotWorkspaceAllowlist(ClawWorkspaceAllowlist):
-    """Allowlist for the nanobot agent workspace (file-per-agent + shared)."""
+    """Allowlist for the nanobot agent workspace (single-agent install).
+
+    Nanobot keeps a single shared workspace at ``~/.nanobot/workspace``; its
+    sub-agents run as background sessions with no on-disk per-agent files, so
+    this is a single-agent layout (the agent name is only the repo identity).
+    """
 
     @property
     def product_name(self) -> str:
         return "nanobot"
-
-    @property
-    def supports_individual_watch(self) -> bool:
-        return False
 
     @property
     def default_workspace_root(self) -> Path:
@@ -250,21 +280,12 @@ class NanobotWorkspaceAllowlist(ClawWorkspaceAllowlist):
             "AGENTS.md",
             "SOUL.md",
             "USER.md",
-            "TOOLS.md",
             "HEARTBEAT.md",
-            "agents/{name}.md",
             "memory/MEMORY.md",
             "memory/HISTORY.md",
             "skills/*/SKILL.md",
-            "skills/*/_meta.json",
             "skills/*/scripts/*",
-            "skills/*/setup.md",
-            "skills/*/operations.md",
-            "skills/*/boundaries.md",
         ]
-
-    def list_agents(self) -> List[str]:
-        return self._list_agents_from_dir(self.workspace_root / "agents")
 
 
 class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
@@ -313,6 +334,26 @@ class OpenclawWorkspaceAllowlist(ClawWorkspaceAllowlist):
         if self._is_all():
             return [f"workspace*/{p}" for p in self.patterns]
         return self.patterns
+
+    @property
+    def is_root_per_agent(self) -> bool:
+        return True
+
+    def split_all_path(self, rel_path: str) -> Tuple[Optional[str], str]:
+        # agent lives in ``workspace/`` (default) or ``workspace-<name>/``.
+        if "/" not in rel_path:
+            return (None, rel_path)
+        head, rest = rel_path.split("/", 1)
+        if head == "workspace":
+            return (DEFAULT_AGENT_NAME, rest)
+        if head.startswith("workspace-"):
+            return (head[len("workspace-"):], rest)
+        return (None, rel_path)
+
+    def join_all_path(self, agent_name: str, bare_path: str) -> str:
+        if agent_name in ("", DEFAULT_AGENT_NAME):
+            return f"workspace/{bare_path}"
+        return f"workspace-{agent_name}/{bare_path}"
 
     def list_agents(self) -> List[str]:
         base = Path.home() / ".openclaw"
@@ -396,6 +437,20 @@ class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
             return [f"*/{p}" for p in self.patterns]
         return self.patterns
 
+    @property
+    def is_root_per_agent(self) -> bool:
+        return True
+
+    def split_all_path(self, rel_path: str) -> Tuple[Optional[str], str]:
+        # agent directory name IS the agent name: ``<agent>/<bare>``.
+        if "/" in rel_path:
+            head, rest = rel_path.split("/", 1)
+            return (head, rest)
+        return (None, rel_path)
+
+    def join_all_path(self, agent_name: str, bare_path: str) -> str:
+        return f"{agent_name}/{bare_path}"
+
     def list_agents(self) -> List[str]:
         base = Path.home() / ".qwenpaw" / "workspaces"
         if not base.is_dir():
@@ -407,8 +462,10 @@ class QwenpawWorkspaceAllowlist(ClawWorkspaceAllowlist):
 class OpenhumanWorkspaceAllowlist(ClawWorkspaceAllowlist):
     """Allowlist for the OpenHuman agent workspace (single-agent install).
 
-    OpenHuman keeps its hidden workspace at ``~/.openhuman/workspace`` with an
-    Obsidian-style ``wiki/`` memory vault alongside the persona files.
+    OpenHuman is a Rust/Tauri desktop app whose brain is a local Memory Tree
+    mirrored as an Obsidian-style ``wiki/`` Markdown vault. Only the
+    human-readable ``wiki/`` vault is portable; OpenHuman has no OpenClaw-style
+    persona files (SOUL/IDENTITY/USER/...).
     """
 
     @property
@@ -421,19 +478,9 @@ class OpenhumanWorkspaceAllowlist(ClawWorkspaceAllowlist):
 
     @property
     def patterns(self) -> List[str]:
+        # ``*`` in fnmatch spans ``/`` so this recurses the whole wiki vault.
         return [
-            "SOUL.md",
-            "IDENTITY.md",
-            "USER.md",
-            "PROFILE.md",
-            "MEMORY.md",
-            "HEARTBEAT.md",
             "wiki/*.md",
-            "wiki/summaries/*.md",
-            "wiki/notes/*.md",
-            "skills/*/SKILL.md",
-            "skills/*/_meta.json",
-            "skills/*/scripts/*",
         ]
 
 
@@ -474,6 +521,48 @@ class QoderWorkspaceAllowlist(ClawWorkspaceAllowlist):
         return self._list_agents_from_dir(self.workspace_root / "agents")
 
 
+class MsAgentWorkspaceAllowlist(ClawWorkspaceAllowlist):
+    """Allowlist for the ms-agent agent workspace (single-agent install).
+
+    ms-agent keeps its persona, memory and skills under ``~/.ms_agent``:
+
+    * **persona** -- a single ``profile.md`` augmented by injected
+      configuration (project-level ``config.yaml``, global ``settings.json``
+      and a user-specified ``agent.yaml``).
+    * **memory** -- ``MEMORY.md`` plus a structured ``facts.json``.
+    * **skills** -- ``skills/<name>/SKILL.md`` with a workspace-level
+      ``skill.json`` metadata index.
+
+    Only ``profile.md`` (persona) and ``MEMORY.md`` (memory) carry
+    cross-framework semantics; the YAML/JSON config and metadata files are
+    ms-agent specific and are preserved on same-framework sync only.
+    """
+
+    @property
+    def product_name(self) -> str:
+        return "ms-agent"
+
+    @property
+    def default_workspace_root(self) -> Path:
+        return Path.home() / ".ms_agent"
+
+    @property
+    def patterns(self) -> List[str]:
+        return [
+            # Persona + injected configuration
+            "profile.md",
+            "config.yaml",
+            "settings.json",
+            "agent.yaml",
+            # Memory
+            "MEMORY.md",
+            "facts.json",
+            # Skills
+            "skill.json",
+            "skills/*/SKILL.md",
+        ]
+
+
 def _list_agent_files(agents_dir: Path) -> List[str]:
     """Return the stems of ``*.md`` files in an ``agents/`` directory."""
     if not agents_dir.is_dir():
@@ -488,4 +577,5 @@ ALLOWLIST_REGISTRY: Dict[str, Type[ClawWorkspaceAllowlist]] = {
     "qwenpaw": QwenpawWorkspaceAllowlist,
     "openhuman": OpenhumanWorkspaceAllowlist,
     "qoder": QoderWorkspaceAllowlist,
+    "ms-agent": MsAgentWorkspaceAllowlist,
 }

@@ -33,11 +33,39 @@ class _DownloadStub:
         return self.STORE[file_path]
 
 
+class _QwenpawAllStub:
+    """Serves a qwenpaw all-mode repo (agent-prefixed paths) for convert tests."""
+
+    instances = []
+    STORE = {
+        ".gitattributes": "x",
+        "README.md": "readme",
+        "default/AGENTS.md": "# default agents",
+        "default/SOUL.md": "# default soul",
+        "bot-a/AGENTS.md": "# bot-a agents",
+        "bot-a/SOUL.md": "# bot-a soul",
+        "bot-a/PROFILE.md": "# bot-a profile",
+    }
+
+    def __init__(self, server, token=None, timeout=60):
+        _QwenpawAllStub.instances.append(self)
+
+    def repo_info(self, path, name):
+        return {"Path": path, "Name": name, "Framework": "qwenpaw", "Revision": 1}
+
+    def list_repo_files(self, path, name):
+        return list(self.STORE)
+
+    def download_repo_file(self, path, name, file_path):
+        return self.STORE[file_path]
+
+
 class TestDownload(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.out = Path(self.tmp.name) / "ws"
         _DownloadStub.instances = []
+        _QwenpawAllStub.instances = []
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -136,6 +164,55 @@ class TestDownload(unittest.TestCase):
         # Should still write files (stub doesn't care about group).
         self.assertTrue((self.out / "SOUL.md").is_file())
 
+    @mock.patch.object(commands.config, "resolve_username", return_value="u")
+    @mock.patch.object(commands.config, "resolve_token", return_value="tok")
+    @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
+    @mock.patch.object(commands, "UltronClient", _QwenpawAllStub)
+    def test_download_convert_all_root_to_root(self, *_):
+        """qwenpaw -> openclaw with --name all: per-agent convert + re-prefix."""
+        rc = _run([
+            "download", "--repo", "qw", "--framework", "qwenpaw",
+            "--name", "all", "--target", "openclaw", "--local_dir", str(self.out),
+        ])
+        self.assertEqual(rc, 0)
+        # default -> workspace/, bot-a -> workspace-bot-a/ (openclaw convention)
+        self.assertTrue((self.out / "workspace" / "AGENTS.md").is_file())
+        self.assertTrue((self.out / "workspace-bot-a" / "AGENTS.md").is_file())
+        self.assertTrue((self.out / "workspace-bot-a" / "SOUL.md").is_file())
+        # qwenpaw-only PROFILE.md has no openclaw equivalent: must NOT land as-is.
+        self.assertFalse((self.out / "workspace-bot-a" / "PROFILE.md").exists())
+        # top-level non-agent files (README) are dropped, never mis-prefixed.
+        self.assertFalse((self.out / "README.md").exists())
+
+    @mock.patch.object(commands.config, "resolve_username", return_value="u")
+    @mock.patch.object(commands.config, "resolve_token", return_value="tok")
+    @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
+    @mock.patch.object(commands, "UltronClient", _QwenpawAllStub)
+    def test_download_convert_all_cross_layout_rejected(self, *_):
+        """qwenpaw -> qoder with --name all is cross-layout: must be rejected."""
+        rc = _run([
+            "download", "--repo", "qw", "--framework", "qwenpaw",
+            "--name", "all", "--target", "qoder", "--local_dir", str(self.out),
+        ])
+        self.assertEqual(rc, 1)
+
+    @mock.patch.object(commands.config, "resolve_username", return_value="u")
+    @mock.patch.object(commands.config, "resolve_token", return_value="tok")
+    @mock.patch.object(commands.config, "resolve_server", return_value="http://s")
+    @mock.patch.object(commands, "UltronClient", _QwenpawAllStub)
+    def test_download_all_same_framework_keeps_prefixed_paths(self, *_):
+        """qwenpaw -> qwenpaw with --name all: no convert, agent prefixes kept."""
+        rc = _run([
+            "download", "--repo", "qw", "--framework", "qwenpaw",
+            "--name", "all", "--local_dir", str(self.out),
+        ])
+        self.assertEqual(rc, 0)
+        self.assertTrue((self.out / "default" / "AGENTS.md").is_file())
+        self.assertTrue((self.out / "bot-a" / "AGENTS.md").is_file())
+        self.assertTrue((self.out / "bot-a" / "PROFILE.md").is_file())
+        # non-spec top-level files are skipped.
+        self.assertFalse((self.out / "README.md").exists())
+
 
 class TestConvert(unittest.TestCase):
     def setUp(self):
@@ -153,7 +230,7 @@ class TestConvert(unittest.TestCase):
     def test_convert_local_nanobot_to_hermes(self):
         rc = _run([
             "convert", "--from", "nanobot", "--to", "hermes",
-            "--local_dir", str(self.src), "--out", str(self.out),
+            "--local_dir", str(self.src), "--out-dir", str(self.out),
         ])
         self.assertEqual(rc, 0)
         self.assertTrue((self.out / "SOUL.md").is_file())
@@ -163,7 +240,7 @@ class TestConvert(unittest.TestCase):
     def test_convert_dry_run_writes_nothing(self):
         rc = _run([
             "convert", "--from", "nanobot", "--to", "hermes",
-            "--local_dir", str(self.src), "--out", str(self.out), "--dry-run",
+            "--local_dir", str(self.src), "--out-dir", str(self.out), "--dry-run",
         ])
         self.assertEqual(rc, 0)
         self.assertFalse(self.out.exists())
@@ -181,6 +258,35 @@ class TestConvert(unittest.TestCase):
             "--local_dir", str(self.src / "missing"),
         ])
         self.assertEqual(rc, 1)
+
+    def test_convert_qwenpaw_to_qoder_persona_lands_in_agents_file(self):
+        """file-per-agent target: -n routes persona to agents/{name}.md.
+
+        qwenpaw SOUL/PROFILE have no shared mapping on qoder, so they must be
+        routed to the per-agent file agents/bot-a.md rather than polluting the
+        shared AGENTS.md.
+        """
+        src = Path(self.tmp.name) / "qp"
+        out = Path(self.tmp.name) / "qo"
+        src.mkdir(parents=True)
+        (src / "SOUL.md").write_text("# Soul\nQP_SOUL_IDENTITY.\n")
+        (src / "PROFILE.md").write_text("# Profile\nQP_PROFILE_MARKER.\n")
+        (src / "AGENTS.md").write_text("# Agents\nSHARED_QP_AGENTS.\n")
+        rc = _run([
+            "convert", "--from", "qwenpaw", "--to", "qoder", "-n", "bot-a",
+            "--local_dir", str(src), "--out-dir", str(out),
+        ])
+        self.assertEqual(rc, 0)
+        agent_file = out / "agents" / "bot-a.md"
+        self.assertTrue(agent_file.is_file(),
+                        "persona must land in agents/bot-a.md")
+        body = agent_file.read_text()
+        self.assertIn("QP_SOUL_IDENTITY.", body)
+        self.assertIn("QP_PROFILE_MARKER.", body)
+        shared = out / "AGENTS.md"
+        if shared.is_file():
+            self.assertNotIn("QP_SOUL_IDENTITY.", shared.read_text(),
+                             "shared AGENTS.md must stay free of per-agent identity")
 
 
 if __name__ == "__main__":

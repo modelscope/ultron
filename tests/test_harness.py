@@ -154,6 +154,64 @@ class TestAllowlist(unittest.TestCase):
         self.assertIn("nanobot", ALLOWLIST_REGISTRY)
         self.assertIn("openclaw", ALLOWLIST_REGISTRY)
         self.assertIn("hermes", ALLOWLIST_REGISTRY)
+        self.assertIn("ms-agent", ALLOWLIST_REGISTRY)
+
+    def test_ms_agent_single_agent_layout(self):
+        """ms-agent is single-agent: no {name} placeholder, collects persona/
+        memory/skills/config under ~/.ms_agent."""
+        al = ALLOWLIST_REGISTRY["ms-agent"](local_dir=self.root)
+        self.assertEqual(al.product_name, "ms-agent")
+        # single-agent: no {name} placeholder in patterns
+        self.assertFalse(any("{name}" in p for p in al.patterns))
+        (self.root / "profile.md").write_text("p")
+        (self.root / "MEMORY.md").write_text("m")
+        (self.root / "facts.json").write_text("{}")
+        (self.root / "settings.json").write_text("{}")
+        (self.root / "skill.json").write_text("{}")
+        (self.root / "random.txt").write_text("x")
+        (self.root / "skills" / "foo").mkdir(parents=True)
+        (self.root / "skills" / "foo" / "SKILL.md").write_text("s")
+        got = al.collect()
+        for f in ("profile.md", "MEMORY.md", "facts.json", "settings.json",
+                  "skill.json", "skills/foo/SKILL.md"):
+            self.assertIn(f, got)
+        self.assertNotIn("random.txt", got)
+
+
+class TestAllPathPrefix(unittest.TestCase):
+    """split_all_path / join_all_path for cross-framework all-mode convert."""
+
+    def _spec(self, fw):
+        return ALLOWLIST_REGISTRY[fw](agent_name="all")
+
+    def test_qwenpaw_split_join(self):
+        spec = self._spec("qwenpaw")
+        self.assertTrue(spec.is_root_per_agent)
+        self.assertEqual(spec.split_all_path("bot-a/AGENTS.md"), ("bot-a", "AGENTS.md"))
+        self.assertEqual(spec.split_all_path("default/SOUL.md"), ("default", "SOUL.md"))
+        self.assertEqual(spec.split_all_path("README.md"), (None, "README.md"))
+        self.assertEqual(spec.join_all_path("bot-a", "AGENTS.md"), "bot-a/AGENTS.md")
+
+    def test_openclaw_split_join(self):
+        spec = self._spec("openclaw")
+        self.assertTrue(spec.is_root_per_agent)
+        self.assertEqual(spec.split_all_path("workspace/AGENTS.md"), ("default", "AGENTS.md"))
+        self.assertEqual(spec.split_all_path("workspace-bot-a/SOUL.md"), ("bot-a", "SOUL.md"))
+        self.assertEqual(spec.split_all_path("README.md"), (None, "README.md"))
+        self.assertEqual(spec.join_all_path("default", "AGENTS.md"), "workspace/AGENTS.md")
+        self.assertEqual(spec.join_all_path("bot-a", "SOUL.md"), "workspace-bot-a/SOUL.md")
+
+    def test_roundtrip_qwenpaw_to_openclaw(self):
+        src = self._spec("qwenpaw")
+        dst = self._spec("openclaw")
+        agent, bare = src.split_all_path("bot-a/AGENTS.md")
+        self.assertEqual(dst.join_all_path(agent, bare), "workspace-bot-a/AGENTS.md")
+
+    def test_non_root_per_agent_passthrough(self):
+        spec = self._spec("qoder")
+        self.assertFalse(spec.is_root_per_agent)
+        self.assertEqual(spec.split_all_path("agents/x.md"), (None, "agents/x.md"))
+        self.assertEqual(spec.join_all_path("x", "agents/x.md"), "agents/x.md")
 
 
 class TestHarnessBundle(unittest.TestCase):
