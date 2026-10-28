@@ -6,10 +6,9 @@ import HarnessIoBlurb from './HarnessIoBlurb';
 
 const PRODUCT_ALLOWLISTS: Record<string, string[]> = {
   nanobot: [
-    'AGENTS.md', 'SOUL.md', 'USER.md', 'TOOLS.md', 'HEARTBEAT.md',
+    'AGENTS.md', 'SOUL.md', 'USER.md', 'HEARTBEAT.md',
     'memory/MEMORY.md', 'memory/HISTORY.md',
-    'skills/*/SKILL.md', 'skills/*/_meta.json', 'skills/*/scripts/*',
-    'skills/*/setup.md', 'skills/*/operations.md', 'skills/*/boundaries.md',
+    'skills/*/SKILL.md', 'skills/*/scripts/*',
   ],
   openclaw: [
     'AGENTS.md', 'SOUL.md', 'USER.md', 'TOOLS.md', 'HEARTBEAT.md',
@@ -28,14 +27,17 @@ const PRODUCT_ALLOWLISTS: Record<string, string[]> = {
     'skills/*/SKILL.md', 'skills/*/_meta.json', 'skills/*/scripts/*',
   ],
   openhuman: [
-    'SOUL.md', 'IDENTITY.md', 'USER.md', 'PROFILE.md', 'MEMORY.md', 'HEARTBEAT.md',
-    'wiki/*.md', 'wiki/summaries/*.md', 'wiki/notes/*.md',
-    'skills/*/SKILL.md', 'skills/*/_meta.json', 'skills/*/scripts/*',
+    'wiki/*.md',
+  ],
+  'ms-agent': [
+    'profile.md', 'config.yaml', 'settings.json', 'agent.yaml',
+    'MEMORY.md', 'facts.json',
+    'skill.json', 'skills/*/SKILL.md',
   ],
 };
 
-const PRODUCT_DIRS: Record<string, string> = { nanobot: '.nanobot', openclaw: '.openclaw', hermes: '.hermes', qwenpaw: '.qwenpaw', openhuman: '.openhuman' };
-const PRODUCT_MARKERS: Record<string, string> = { '.nanobot': 'nanobot', '.openclaw': 'openclaw', '.hermes': 'hermes', '.qwenpaw': 'qwenpaw', '.openhuman': 'openhuman' };
+const PRODUCT_DIRS: Record<string, string> = { nanobot: '.nanobot', openclaw: '.openclaw', hermes: '.hermes', qwenpaw: '.qwenpaw', openhuman: '.openhuman', 'ms-agent': '.ms_agent' };
+const PRODUCT_MARKERS: Record<string, string> = { '.nanobot': 'nanobot', '.openclaw': 'openclaw', '.hermes': 'hermes', '.qwenpaw': 'qwenpaw', '.openhuman': 'openhuman', '.ms_agent': 'ms-agent' };
 
 function globMatch(pattern: string, path: string) {
   const re = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
@@ -189,7 +191,7 @@ export default function UploadWorkspace({ onUploaded }: { onUploaded?: () => voi
           {t('harness.upload.hintPaths')}{' '}
           <code className="text-primary">~/.nanobot</code>, <code className="text-primary">~/.openclaw</code>,{' '}
           <code className="text-primary">~/.hermes</code>, <code className="text-primary">~/.qwenpaw</code>,{' '}
-          <code className="text-primary">~/.openhuman</code>
+          <code className="text-primary">~/.openhuman</code>, <code className="text-primary">~/.ms_agent</code>
         </div>
       </div>
       )}

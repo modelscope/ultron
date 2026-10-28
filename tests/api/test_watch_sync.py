@@ -45,7 +45,7 @@ from ultron.services.harness.allowlist import (
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-SERVER = os.environ.get("SERVER", "http://pre.modelscope.cn")
+SERVER = os.environ.get("SERVER", "http://www.modelscope.cn")
 TOKEN = os.environ.get("TOKEN", "")
 AGENT_PREFIX = "test-watch"
 REQUEST_INTERVAL = int(os.environ.get("REQUEST_INTERVAL", "8"))
@@ -137,13 +137,13 @@ class TestWatchSync(unittest.TestCase):
 
     def _upload_remote(self, name: str, framework: str, files: dict):
         """Upload files directly to remote (simulates remote-side changes)."""
-        # Convert str values to bytes for the new upload_file API
+        from ultron.cli.sync import push_resources
+        # Convert str values to bytes for the commit-based upload API
         byte_files = {
             k: (v.encode("utf-8") if isinstance(v, str) else v)
             for k, v in files.items()
         }
-        file_id = self.client.upload_file(byte_files)
-        self.client.create_repo(self.username, name, framework, system_prompt_files=file_id)
+        push_resources(self.client, self.username, name, framework, byte_files)
 
     def _start_watch(self, framework: str, agent_name: str, local_dir: str, repo_name: str, push_only: bool = True) -> multiprocessing.Process:
         """Start a watch_loop in a child process, return the Process."""

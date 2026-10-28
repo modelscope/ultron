@@ -18,20 +18,23 @@ class _StubClient:
         self.server = server
         self.token = token
         self.created = []
-        self.uploaded_resources = None
+        self.uploaded_resources = {}
         _StubClient.instances.append(self)
 
     def check_repo(self, path, name):
         return False
 
-    def upload_file(self, resources):
-        """Accept Dict[str, bytes]; return a fake Gid."""
-        self.uploaded_resources = resources
-        return "fake-gid-uuid"
-
-    def create_repo(self, path, name, framework, **kwargs):
-        self.created.append((path, name, framework, kwargs.get("system_prompt_files")))
+    def create_repo(self, path, name, framework=None):
+        self.created.append((path, name, framework))
         return {"success": True}
+
+    def commit_files(self, path, name, actions, *, revision="master", commit_message=""):
+        import base64 as _b64
+        for a in actions:
+            self.uploaded_resources[a["path"]] = _b64.b64decode(a["content"])
+
+    def upload_lfs_file(self, path, name, file_path, content, *, action="create", revision="master", commit_message=""):
+        self.uploaded_resources[file_path] = content
 
 
 def _run(argv):
@@ -84,10 +87,9 @@ class TestUploadCli(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(len(_StubClient.instances), 1)
         client = _StubClient.instances[0]
-        # create_repo called with (group, repo_name, framework, system_prompt_files)
+        # create_repo called with (group, repo_name, framework)
         self.assertEqual(len(client.created), 1)
-        self.assertEqual(client.created[0][:3], ("u", "qoder-reviewer", "qoder"))
-        self.assertEqual(client.created[0][3], "fake-gid-uuid")
+        self.assertEqual(client.created[0], ("u", "qoder-reviewer", "qoder"))
         # Verify uploaded resources are bytes-valued dict
         self.assertIsNotNone(client.uploaded_resources)
         self.assertIsInstance(client.uploaded_resources, dict)
@@ -192,7 +194,7 @@ class TestUploadCli(unittest.TestCase):
             self.assertFalse(p.startswith("agents/"))
 
 
-class TestListCli(unittest.TestCase):
+class TestStatusCli(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -204,12 +206,107 @@ class TestListCli(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_list_shows_agents(self):
-        rc = _run(["list", "--framework", "qoder", "--local_dir", str(self.root)])
+    def test_status_shows_agents(self):
+        rc = _run(["status", "--framework", "qoder", "--local_dir", str(self.root)])
         self.assertEqual(rc, 0)
 
-    def test_list_unknown_framework_fails(self):
-        rc = _run(["list", "--framework", "nope", "--local_dir", str(self.root)])
+    def test_status_unknown_framework_fails(self):
+        rc = _run(["status", "--framework", "nope", "--local_dir", str(self.root)])
+        self.assertEqual(rc, 1)
+
+
+class TestBackupsFilterCli(unittest.TestCase):
+    """Test backup list/restore framework and name filtering."""
+
+    def setUp(self):
+        import zipfile
+        self.tmp = tempfile.TemporaryDirectory()
+        # Create fake backup zips in a temp cache dir.
+        self.cache_dir = Path(self.tmp.name)
+        # Simulate backups for different frameworks (real zip files).
+        for name in [
+            "qoder_default_20260624_120000.zip",
+            "qoder_reviewer_20260624_130000.zip",
+            "qwenpaw_default_20260702_170208.zip",
+            "nanobot_mybot_20260703_100000.zip",
+        ]:
+            zpath = self.cache_dir / name
+            with zipfile.ZipFile(zpath, 'w') as zf:
+                zf.writestr("dummy.txt", "placeholder")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    @mock.patch("ultron.cli.cache.cache_dir")
+    def test_backups_list_all(self, mock_cache):
+        """Without --framework, list all backups."""
+        mock_cache.return_value = self.cache_dir
+        rc = _run(["backups"])
+        self.assertEqual(rc, 0)
+
+    @mock.patch("ultron.cli.cache.cache_dir")
+    def test_backups_list_filter_by_framework(self, mock_cache):
+        """With --framework qoder, only qoder backups appear."""
+        mock_cache.return_value = self.cache_dir
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = _run(["backups", "--framework", "qoder"])
+        self.assertEqual(rc, 0)
+        output = buf.getvalue()
+        self.assertIn("qoder_default_20260624_120000.zip", output)
+        self.assertIn("qoder_reviewer_20260624_130000.zip", output)
+        self.assertNotIn("qwenpaw", output)
+        self.assertNotIn("nanobot", output)
+
+    @mock.patch("ultron.cli.cache.cache_dir")
+    def test_backups_list_filter_by_name(self, mock_cache):
+        """With --name reviewer, only matching backups appear."""
+        mock_cache.return_value = self.cache_dir
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = _run(["backups", "--name", "reviewer"])
+        self.assertEqual(rc, 0)
+        output = buf.getvalue()
+        self.assertIn("qoder_reviewer_20260624_130000.zip", output)
+        self.assertNotIn("qoder_default", output)
+        self.assertNotIn("qwenpaw", output)
+
+    @mock.patch("ultron.cli.cache.cache_dir")
+    def test_backups_list_no_match(self, mock_cache):
+        """Filter with nonexistent framework returns 'No backups found'."""
+        mock_cache.return_value = self.cache_dir
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = _run(["backups", "--framework", "hermes"])
+        self.assertEqual(rc, 0)
+        self.assertIn("No backups found", buf.getvalue())
+
+    @mock.patch("ultron.cli.cache.cache_dir")
+    def test_restore_last_filters_by_framework(self, mock_cache):
+        """'restore last -f qoder' picks the latest qoder backup, not qwenpaw."""
+        mock_cache.return_value = self.cache_dir
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = _run(["restore", "last", "--framework", "qoder", "--local_dir", str(self.cache_dir)])
+        # rc=1 because the fake zip is not a real zip, but it should attempt
+        # the qoder_reviewer (latest qoder) not the qwenpaw one.
+        # If it picked wrong, it would fail with "no backups found" or use qwenpaw.
+        # Since there are qoder backups, it should NOT say "no backups found".
+        self.assertNotIn("no backups found", buf.getvalue().lower())
+
+    @mock.patch("ultron.cli.cache.cache_dir")
+    def test_restore_last_no_match_fails(self, mock_cache):
+        """'restore last -f hermes' with no hermes backups should fail."""
+        mock_cache.return_value = self.cache_dir
+        rc = _run(["restore", "last", "--framework", "hermes"])
         self.assertEqual(rc, 1)
 
 

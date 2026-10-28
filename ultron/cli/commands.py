@@ -82,10 +82,13 @@ def _resolve_local_name(name: Optional[str], framework: str, local_dir=None):
 
     Returns (resolved_name, error_message).
     - If name is given → use it directly.
-    - If omitted → check list_agents():
-      - 0 or only 'default' → use GLOBAL_AGENT_NAME (shared files only)
-      - exactly 1 non-default agent → auto-select it
-      - multiple → return error
+    - If omitted:
+      - root-per-agent / single-agent layout (no ``{name}`` placeholder) →
+        always DEFAULT_AGENT_NAME.  'default' is a real workspace directory, so
+        sibling sub-agents never trigger auto-select or an error.
+      - file-per-agent+shared layout (patterns use ``{name}``) → inspect the
+        ``agents/`` files: exactly 1 non-default → auto-select it; 0 →
+        GLOBAL_AGENT_NAME (shared files only); multiple → error.
     """
     if name:
         return name, None
@@ -94,15 +97,20 @@ def _resolve_local_name(name: Optional[str], framework: str, local_dir=None):
     spec_cls = ALLOWLIST_REGISTRY[framework]
     local = Path(local_dir).expanduser() if local_dir else None
     tmp_spec = spec_cls(agent_name=DEFAULT_AGENT_NAME, local_dir=local)
+
+    # root-per-agent / single-agent: an omitted --name always means the default
+    # agent.  Only layouts with a ``{name}`` placeholder (file-per-agent+shared)
+    # have a meaningful shared/global mode or per-agent auto-selection.
+    has_shared_mode = any("{name}" in p for p in tmp_spec.patterns)
+    if not has_shared_mode:
+        return DEFAULT_AGENT_NAME, None
+
     agents = tmp_spec.list_agents()
-
-    # Filter out "default" to find real sub-agents.
     real_agents = [a for a in agents if a != DEFAULT_AGENT_NAME]
-
-    if len(real_agents) == 0:
-        return GLOBAL_AGENT_NAME, None
     if len(real_agents) == 1:
         return real_agents[0], None
+    if len(real_agents) == 0:
+        return GLOBAL_AGENT_NAME, None
     return None, (
         f"multiple sub-agents found: {', '.join(agents)}. "
         f"Please specify --name to select one."
@@ -142,15 +150,23 @@ def _build_allowlist(framework: str, name: str, local_dir):
     return spec_cls(agent_name=name, local_dir=local)
 
 
-def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
+def _convert(resources: dict, source_fw: str, target_fw: str,
+             *, all_mode: bool = False, src_spec=None, dst_spec=None) -> dict:
     """Convert workspace resources from one framework's format to another.
 
     Reuses the server-side cross-product migration (``merge_resources``), so the
     output paths follow the target framework's conventions. A no-op when source
     and target are the same.
+
+    When *all_mode* is True (root-per-agent -> root-per-agent), paths carry an
+    agent prefix; each agent is split out, converted independently as a single
+    agent, then re-prefixed for the target framework.  Requires *src_spec* and
+    *dst_spec*.
     """
     if source_fw == target_fw:
         return resources
+    if all_mode:
+        return _convert_all(resources, source_fw, target_fw, src_spec, dst_spec)
     result = merge_resources(
         incoming=resources,
         source_product=source_fw,
@@ -161,7 +177,92 @@ def _convert(resources: dict, source_fw: str, target_fw: str) -> dict:
     return result.merged_files
 
 
+def _convert_all(resources: dict, source_fw: str, target_fw: str, src_spec, dst_spec) -> dict:
+    """All-mode cross-framework convert (root-per-agent -> root-per-agent).
+
+    Group incoming files by their source agent prefix, convert each agent as an
+    isolated single-agent workspace, then re-prefix the results using the target
+    framework's convention.  Top-level files without an agent prefix (e.g.
+    README.md) belong to no agent and are dropped.
+    """
+    groups: dict = {}
+    for path, content in resources.items():
+        agent, bare = src_spec.split_all_path(path)
+        if agent is None:
+            continue
+        groups.setdefault(agent, {})[bare] = content
+
+    src_defaults = get_defaults(source_fw)
+    tgt_defaults = get_defaults(target_fw)
+    out: dict = {}
+    for agent, bare_files in groups.items():
+        result = merge_resources(
+            incoming=bare_files,
+            source_product=source_fw,
+            target_product=target_fw,
+            source_defaults=src_defaults,
+            target_defaults=tgt_defaults,
+        )
+        for bare_path, content in result.merged_files.items():
+            out[dst_spec.join_all_path(agent, bare_path)] = content
+    return out
+
+
 def cmd_list(args) -> int:
+    """List remote agent repositories."""
+    server = config.resolve_server(getattr(args, 'server', None))
+    token = config.resolve_token(getattr(args, 'token', None))
+    if not server:
+        return _fail("not logged in. Run 'ultron login' first or pass --server.")
+
+    client = UltronClient(server, token)
+    try:
+        result = client.list_agents(
+            owner=getattr(args, 'owner', None),
+            page_number=getattr(args, 'page_number', 1),
+            page_size=getattr(args, 'page_size', 10),
+        )
+    except ApiError as e:
+        return _fail(_api_error_message(e, "list"))
+    except Exception as e:
+        return _fail(f"list failed: {e}")
+
+    items = result.get("items") or []
+    total = result.get("total_count", len(items))
+
+    if not items:
+        print("(no agent repositories found)")
+        return 0
+
+    headers = ['repo_id', 'framework', 'visibility', 'updated']
+    rows = []
+    for item in items:
+        owner_name = item.get('Path') or item.get('path') or ''
+        repo_name = item.get('Name') or item.get('name') or ''
+        repo_id = f'{owner_name}/{repo_name}' if owner_name else repo_name
+        fw = item.get('Framework') or item.get('framework') or '-'
+        vis = item.get('Visibility') or item.get('visibility') or '-'
+        updated = item.get('LastUpdatedDate') or item.get('last_updated_date') or '-'
+        if isinstance(updated, str) and 'T' in updated:
+            updated = updated.split('T')[0]
+        rows.append((repo_id, fw, vis, updated))
+
+    col_widths = [len(h) for h in headers]
+    for row in rows:
+        for i, val in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(str(val)))
+
+    fmt = '  '.join(f'{{:<{w}}}' for w in col_widths)
+    print(fmt.format(*headers))
+    print(fmt.format(*['-' * w for w in col_widths]))
+    for row in rows:
+        print(fmt.format(*[str(v) for v in row]))
+
+    print(f'\npage {getattr(args, "page_number", 1)} / total {total} (page_size={getattr(args, "page_size", 10)})')
+    return 0
+
+
+def cmd_status(args) -> int:
     """List discoverable sub-agents for a framework."""
     framework = args.framework
     if framework not in ALLOWLIST_REGISTRY:
@@ -169,16 +270,13 @@ def cmd_list(args) -> int:
 
     spec = _build_allowlist(framework, DEFAULT_AGENT_NAME, getattr(args, 'local_dir', None))
     agents = spec.list_agents()
-    print(f"Sub-agents for {framework}:")
+    print(f"Agents for {framework}:")
     for a in agents:
-        # Show file count for each agent.
-        if a == DEFAULT_AGENT_NAME:
-            tmp = _build_allowlist(framework, GLOBAL_AGENT_NAME, getattr(args, 'local_dir', None))
-        else:
-            tmp = _build_allowlist(framework, a, getattr(args, 'local_dir', None))
-        count = len(tmp.collect_bytes())
-        label = " (global/shared files only)" if a == DEFAULT_AGENT_NAME else ""
-        print(f"  {a} — {count} file(s){label}")
+        tmp = _build_allowlist(framework, a, getattr(args, 'local_dir', None))
+        files = tmp.collect_bytes()
+        print(f"  {a} — {len(files)} file(s), root: {tmp.workspace_root}")
+        for rel in sorted(files):
+            print(f"    {rel}")
     return 0
 
 
@@ -231,16 +329,14 @@ def cmd_upload(args) -> int:
         username=username,
     )
 
-    # Step 1: upload files -> get file_id
+    # Step 1: upload files via commit interface
     try:
-        file_id = client.upload_file(resources)
-        # Step 2: create/update agent with file_id
-        result = client.create_repo(
-            group, repo, framework,
-            system_prompt_files=file_id,
-        )
+        from .sync import push_resources
+        push_resources(client, group, repo, framework, resources)
     except ApiError as e:
         return _fail(_api_error_message(e, "upload"))
+    except Exception as e:
+        return _fail(f"upload failed: {e}")
 
     print(
         f"\nUploaded {len(resources)} file(s) to "
@@ -296,14 +392,30 @@ def cmd_download(args) -> int:
     target_fw = args.target or framework
     if target_fw not in ALLOWLIST_REGISTRY:
         return _fail(f"unknown target framework '{target_fw}'. Available: {_frameworks()}")
-    if target_fw != framework:
-        resources = _convert(resources, framework, target_fw)
-        print(f"Converted {framework} -> {target_fw} ({len(resources)} file(s)).")
 
     # Resolve local agent name for writing.
     local_name = args.name or DEFAULT_AGENT_NAME
     spec = _build_allowlist(target_fw, local_name, args.local_dir)
     root = spec.workspace_root
+
+    if target_fw != framework:
+        if args.name == ALL_AGENT_NAME:
+            # All-mode conversion only makes sense between two root-per-agent
+            # frameworks (1:1 agent-directory mapping); other layouts (e.g.
+            # file-per-agent qoder, single-agent) collapse N agents into a
+            # shared root, which is lossy and ambiguous -- reject explicitly.
+            src_spec = _build_allowlist(framework, local_name, args.local_dir)
+            if not (src_spec.is_root_per_agent and spec.is_root_per_agent):
+                return _fail(
+                    "cross-framework conversion with --name all is only supported "
+                    "between root-per-agent frameworks (e.g. qwenpaw <-> openclaw). "
+                    "For other layouts, convert one agent at a time: "
+                    "-n <agent> --target <fw>.")
+            resources = _convert(resources, framework, target_fw,
+                                 all_mode=True, src_spec=src_spec, dst_spec=spec)
+        else:
+            resources = _convert(resources, framework, target_fw)
+        print(f"Converted {framework} -> {target_fw} ({len(resources)} file(s)).")
 
     # Filter downloaded resources by allowlist patterns.
     patterns = spec.resolved_patterns()
@@ -330,6 +442,99 @@ def cmd_download(args) -> int:
     return 0
 
 
+def _file_per_agent_identity_path(dst_spec) -> Optional[str]:
+    """Resolve the per-agent identity file for a file-per-agent target.
+
+    File-per-agent frameworks (e.g. qoder) declare a ``{name}`` placeholder
+    pattern such as ``agents/{name}.md``.  Format it with the destination
+    agent name so converted persona content can be routed into that file.
+    Returns ``None`` when the layout has no single ``{name}`` file pattern.
+    """
+    name = dst_spec.agent_name or DEFAULT_AGENT_NAME
+    for pattern in dst_spec.patterns:
+        # Only single-file placeholders (no wildcard) identify the persona file;
+        # skip glob patterns like ``skills/{name}/*`` if any exist.
+        if "{name}" in pattern and "*" not in pattern:
+            return pattern.format(name=name)
+    return None
+
+
+def convert_workspace(
+    src_spec, source_fw: str, target_fw: str, dst_spec, dry_run: bool = False
+) -> int:
+    """Shared convert logic: merge → filter defaults → backup → write.
+
+    Returns 0 on success, 1 on failure.
+    """
+    src_root = src_spec.workspace_root
+    resources = src_spec.collect()
+    if not resources:
+        return _fail(
+            f"no {source_fw} files found under {src_root}."
+        )
+
+    # Convert via merge_resources to get full action details
+    if source_fw == target_fw:
+        converted = resources
+        default_paths = set()
+    else:
+        # File-per-agent targets (e.g. qoder ``agents/{name}.md``) keep
+        # per-agent identity in a dedicated sub-agent file; route overflow
+        # (persona content with no shared mapping) there instead of the
+        # shared catch-all so it does not pollute other sub-agents.
+        overflow_target = None
+        if any("{name}" in p for p in dst_spec.patterns):
+            overflow_target = _file_per_agent_identity_path(dst_spec)
+        result = merge_resources(
+            incoming=resources,
+            source_product=source_fw,
+            target_product=target_fw,
+            source_defaults=get_defaults(source_fw),
+            target_defaults=get_defaults(target_fw),
+            overflow_target=overflow_target,
+        )
+        default_paths = {
+            a.path for a in result.actions if a.action == 'default'
+        }
+        converted = result.merged_files
+
+    dst_root = dst_spec.workspace_root
+
+    # Filter out default-only files: don't create or overwrite with empty templates
+    effective = {k: v for k, v in converted.items() if k not in default_paths}
+    skipped_defaults = sorted(default_paths & set(converted.keys()))
+
+    print(
+        f"Convert {source_fw}/{src_spec.agent_name} ({src_root}) -> "
+        f"{target_fw}/{dst_spec.agent_name} ({dst_root}): "
+        f"{len(resources)} in, {len(effective)} out"
+    )
+    for rel in sorted(effective):
+        print(f"  {rel} -> {dst_root / rel}")
+    if skipped_defaults:
+        print(f"  ({len(skipped_defaults)} default template(s) skipped: "
+              f"{', '.join(skipped_defaults)})")
+
+    if dry_run:
+        print("\n[dry-run] nothing written.")
+        return 0
+
+    if not effective:
+        print("\nNo effective files to write (all were default templates).")
+        return 0
+
+    # Backup existing target files before overwriting
+    from .sync import backup_local
+    existing = dst_spec.collect()
+    if existing:
+        backup_path = backup_local(dst_spec, f"{target_fw}_{dst_spec.agent_name}")
+        print(f"  Backup: {backup_path}")
+
+    written = dst_spec.apply(effective)
+    print(f"\nWrote {len(written)} file(s) under {dst_root}.")
+    return 0
+
+
 def cmd_convert(args) -> int:
     """Local-only format conversion: read a workspace, convert, write it out."""
     source_fw = args.source
@@ -340,36 +545,8 @@ def cmd_convert(args) -> int:
 
     name = args.name or "default"
     src_spec = _build_allowlist(source_fw, name, args.local_dir)
-    src_root = src_spec.workspace_root
-    resources = src_spec.collect()
-    if not resources:
-        return _fail(
-            f"no {source_fw} files found under {src_root}. Check the path or pass --local_dir."
-        )
-
-    converted = _convert(resources, source_fw, target_fw)
-
-    # Destination: --out wins, else the target framework's workspace root.
-    if args.out:
-        dst_spec = _build_allowlist(target_fw, name, args.out)
-    else:
-        dst_spec = _build_allowlist(target_fw, name, None)
-    dst_root = dst_spec.workspace_root
-
-    print(
-        f"Convert {source_fw} ({src_root}) -> {target_fw} ({dst_root}): "
-        f"{len(resources)} in, {len(converted)} out"
-    )
-    for rel in sorted(converted):
-        print(f"  {rel} -> {dst_root / rel}")
-
-    if args.dry_run:
-        print("\n[dry-run] nothing written.")
-        return 0
-
-    written = dst_spec.apply(converted)
-    print(f"\nWrote {len(written)} file(s) under {dst_root}.")
-    return 0
+    dst_spec = _build_allowlist(target_fw, name, args.out_dir)
+    return convert_workspace(src_spec, source_fw, target_fw, dst_spec, dry_run=args.dry_run)
 
 
 def cmd_watch(args) -> int:
@@ -439,7 +616,7 @@ def cmd_watch(args) -> int:
             return _fail(_api_error_message(e, "watch"))
         # repo not found or unreachable — proceed, first push will create it
 
-    interval = 120
+    interval = 60
     push_only = not getattr(args, "pull", False)
     print(f"Starting sync for {group}/{repo} (interval={interval}s)...")
     print(f"  Framework: {framework}")
@@ -451,7 +628,7 @@ def cmd_watch(args) -> int:
     print(f"  Logs: {pid_file().parent / 'logs' / 'watch.log'}")
     print(f"  Stop: ultron stop")
 
-    daemonize(watch_loop, spec, client, username, repo, framework, interval, push_only=push_only)
+    daemonize(watch_loop, spec, client, group, repo, framework, interval, push_only=push_only)
     # If we reach here, we are the parent process (daemon forked successfully).
     print(f"  Watch started (PID file: {pf}).")
     return 0
@@ -467,6 +644,48 @@ def cmd_stop(args) -> int:
     else:
         print("No watch process running.")
     return 0
+
+
+def _strip_backup_wrapper(filename: str) -> str:
+    """Strip the legacy ``agent/`` wrapper dir from a backup zip entry.
+
+    Older backups stored files under an ``agent/`` prefix; new backups don't.
+    Stripping keeps restore aligned with the workspace-relative layout used by
+    ``collect``/``apply`` regardless of which format the zip uses.
+    """
+    prefix = "agent/"
+    if filename.startswith(prefix):
+        return filename[len(prefix):]
+    return filename
+
+
+def _parse_backup_meta(stem: str):
+    """Parse a backup filename stem into ``(framework, name)``.
+
+    Filenames look like ``{fw}{delim}{name}_{date}_{time}``; the leading
+    ``{fw}{delim}{name}`` prefix is split on ``_`` (watch backups) or ``-``
+    (upload backups).
+    """
+    parts = stem.rsplit("_", 2)
+    prefix = parts[0] if len(parts) >= 3 else stem
+    delim = "_" if "_" in prefix else "-"
+    fw, _, nm = prefix.partition(delim)
+    return fw, nm
+
+
+def _filter_backups(backups, fw_filter, name_filter):
+    """Filter backup files by framework/name parsed from their filenames."""
+    if not (fw_filter or name_filter):
+        return backups
+    out = []
+    for f in backups:
+        fw, nm = _parse_backup_meta(f.stem)
+        if fw_filter and fw != fw_filter:
+            continue
+        if name_filter and nm != name_filter:
+            continue
+        out.append(f)
+    return out
 
 
 def cmd_recover(args) -> int:
@@ -490,6 +709,10 @@ def cmd_recover(args) -> int:
 
     # --list mode: enumerate backups and exit
     if args.list:
+        # Filter by framework/name if provided (filename: {fw}_{name}_{date}_{time}.zip)
+        backups = _filter_backups(
+            backups, getattr(args, 'framework', None), getattr(args, 'name', None))
+
         if not backups:
             print("No backups found.")
             return 0
@@ -506,6 +729,10 @@ def cmd_recover(args) -> int:
     target = args.target
     if not target:
         return _fail("specify a target: 'last' or a backup filename. Use --list to see available backups.")
+
+    # Filter backups by framework/name if provided
+    backups = _filter_backups(
+        backups, getattr(args, 'framework', None), getattr(args, 'name', None))
 
     # Resolve target to a zip path
     if target == "last":
@@ -528,20 +755,31 @@ def cmd_recover(args) -> int:
         return _fail(f"unknown framework '{framework}'. Available: {_frameworks()}")
 
     name = args.name
-    if not name:
-        # Infer name from filename: "qoder_20260609_143022.zip" -> "qoder"
-        stem = zip_path.stem
-        parts = stem.rsplit("_", 2)
-        name = parts[0] if len(parts) >= 3 else stem
+    # Parse (framework, name) from the zip filename once, honoring both the
+    # ``-`` (upload) and ``_`` (watch) delimiters, and fill in whatever the
+    # caller left unspecified.  Reusing _parse_backup_meta keeps this aligned
+    # with the --list/restore filtering above.
+    parsed_fw, parsed_name = _parse_backup_meta(zip_path.stem)
 
     if not framework:
-        # Try to infer framework from the name (e.g., "qoder" -> framework "qoder")
-        if name in ALLOWLIST_REGISTRY:
-            framework = name
+        # Try to infer framework from the parsed prefix (e.g., "qoder").
+        if parsed_fw in ALLOWLIST_REGISTRY:
+            framework = parsed_fw
         else:
             return _fail("cannot infer framework. Pass --framework explicitly.")
 
-    spec = _build_allowlist(framework, "all", args.local_dir)
+    # Determine the restore SCOPE (which agent directory the backup belongs to).
+    # An all-scope backup is named ``{fw}_{date}_{time}`` (no name segment), so
+    # ``parsed_name`` is empty -> restore into the all-root.  A single-agent
+    # backup is ``{fw}{delim}{name}_...`` -> restore into that agent only.
+    # A hardcoded "all" here would lift root-per-agent frameworks to the shared
+    # workspaces/ parent and, because a single-agent zip stores bare (unprefixed)
+    # paths, wrongly treat every sibling agent's files as "extra" and delete them.
+    restore_name = name or parsed_name or ALL_AGENT_NAME
+    if not name:
+        name = parsed_name or parsed_fw
+
+    spec = _build_allowlist(framework, restore_name, args.local_dir)
     root = spec.workspace_root
 
     # ---- Step 1: Backup current local files before any modification ----
@@ -553,11 +791,12 @@ def cmd_recover(args) -> int:
     else:
         print("No existing files to backup.")
 
-    # ---- Step 2: Determine which files are in the zip ----
+    # ---- Step 2: Determine which files are in the zip (strip legacy prefix) ----
     with zipfile.ZipFile(zip_path, "r") as zf:
-        zip_entries = set(
-            info.filename for info in zf.infolist() if not info.is_dir()
-        )
+        zip_entries = {
+            _strip_backup_wrapper(info.filename)
+            for info in zf.infolist() if not info.is_dir()
+        }
 
     # ---- Step 3: Delete local files that are NOT in the zip ----
     deleted = 0
@@ -577,14 +816,16 @@ def cmd_recover(args) -> int:
         for info in zf.infolist():
             if info.is_dir():
                 continue
-            file_target = (resolved_root / info.filename).resolve()
+            rel = _strip_backup_wrapper(info.filename)
+            file_target = (resolved_root / rel).resolve()
             if not file_target.is_relative_to(resolved_root):
                 print(f"  Skipped (path traversal): {info.filename}")
                 continue
             file_target.parent.mkdir(parents=True, exist_ok=True)
             file_target.write_bytes(zf.read(info.filename))
-            print(f"  Restored: {info.filename}")
+            print(f"  Restored: {rel}")
             restored += 1
 
     print(f"\nRestored {restored} file(s), removed {deleted} extra file(s).")
     return 0
+

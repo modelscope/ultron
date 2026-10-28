@@ -58,7 +58,7 @@ class TestRepoApi(unittest.TestCase):
     def test_full_roundtrip(self):
         # 1. create
         r = _run(repo.create_repo(
-            CreateRepoRequest(Path="alice", Name="myagent", Framework="QwenPaw", Visibility="public"),
+            CreateRepoRequest(Path="alice", Name="myagent", Framework="QwenPaw"),
             self.user,
         ))
         self.assertEqual(r["data"]["Framework"], "QwenPaw")
@@ -68,7 +68,7 @@ class TestRepoApi(unittest.TestCase):
         self.assertEqual(r["data"]["Framework"], "QwenPaw")
 
         # 3. commit a normal text file
-        r = _run(repo.commit_repo("alice", "myagent", CommitRequest(
+        r = _run(repo.commit_repo("alice", "myagent", "master", CommitRequest(
             commit_message="add soul",
             actions=[CommitAction(action="update", path="SOUL.md", type="normal",
                                   size=5, sha256="", content=_b64("hello"), encoding="base64")],
@@ -89,7 +89,7 @@ class TestRepoApi(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 404)
 
     def test_create_duplicate_409(self):
-        req = CreateRepoRequest(Path="alice", Name="dup", Framework="OpenClaw", Visibility="public")
+        req = CreateRepoRequest(Path="alice", Name="dup", Framework="OpenClaw")
         _run(repo.create_repo(req, self.user))
         with self.assertRaises(HTTPException) as ctx:
             _run(repo.create_repo(req, self.user))
@@ -108,9 +108,9 @@ class TestRepoApi(unittest.TestCase):
 
     def test_lfs_action_rejected(self):
         _run(repo.create_repo(CreateRepoRequest(
-            Path="alice", Name="a2", Framework="QwenPaw", Visibility="public"), self.user))
+            Path="alice", Name="a2", Framework="QwenPaw"), self.user))
         with self.assertRaises(HTTPException) as ctx:
-            _run(repo.commit_repo("alice", "a2", CommitRequest(
+            _run(repo.commit_repo("alice", "a2", "master", CommitRequest(
                 commit_message="big",
                 actions=[CommitAction(action="update", path="data.bin", type="lfs",
                                       size=999, sha256="abc", content="", encoding="")],
@@ -119,9 +119,9 @@ class TestRepoApi(unittest.TestCase):
 
     def test_invalid_base64_rejected(self):
         _run(repo.create_repo(CreateRepoRequest(
-            Path="alice", Name="a4", Framework="QwenPaw", Visibility="public"), self.user))
+            Path="alice", Name="a4", Framework="QwenPaw"), self.user))
         with self.assertRaises(HTTPException) as ctx:
-            _run(repo.commit_repo("alice", "a4", CommitRequest(
+            _run(repo.commit_repo("alice", "a4", "master", CommitRequest(
                 commit_message="bad",
                 actions=[CommitAction(action="update", path="X.md", type="normal",
                                       size=1, sha256="", content="!!!notbase64!!!", encoding="base64")],
@@ -130,13 +130,13 @@ class TestRepoApi(unittest.TestCase):
 
     def test_delete_action(self):
         _run(repo.create_repo(CreateRepoRequest(
-            Path="alice", Name="a3", Framework="QwenPaw", Visibility="public"), self.user))
-        _run(repo.commit_repo("alice", "a3", CommitRequest(
+            Path="alice", Name="a3", Framework="QwenPaw"), self.user))
+        _run(repo.commit_repo("alice", "a3", "master", CommitRequest(
             commit_message="add",
             actions=[CommitAction(action="update", path="X.md", type="normal",
                                   size=1, sha256="", content=_b64("x"), encoding="base64")],
         ), self.user))
-        r = _run(repo.commit_repo("alice", "a3", CommitRequest(
+        r = _run(repo.commit_repo("alice", "a3", "master", CommitRequest(
             commit_message="del",
             actions=[CommitAction(action="delete", path="X.md", type="normal",
                                   size=0, sha256="", content="", encoding="")],
@@ -145,8 +145,8 @@ class TestRepoApi(unittest.TestCase):
 
     def test_list_files_non_recursive_and_root(self):
         _run(repo.create_repo(CreateRepoRequest(
-            Path="alice", Name="a5", Framework="QwenPaw", Visibility="public"), self.user))
-        _run(repo.commit_repo("alice", "a5", CommitRequest(
+            Path="alice", Name="a5", Framework="QwenPaw"), self.user))
+        _run(repo.commit_repo("alice", "a5", "master", CommitRequest(
             commit_message="tree",
             actions=[
                 CommitAction(action="update", path="SOUL.md", type="normal", size=1,

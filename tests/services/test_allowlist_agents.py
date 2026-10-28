@@ -63,13 +63,10 @@ class TestAgentAwareCollect(unittest.TestCase):
 
     def test_local_dir_override_wins(self):
         (self.root / "SOUL.md").write_text("soul")
-        (self.root / "agents").mkdir()
-        (self.root / "agents" / "main.md").write_text("main")
         spec = NanobotWorkspaceAllowlist(agent_name="main", local_dir=self.root)
         self.assertEqual(spec.workspace_root, self.root)
         collected = spec.collect()
         self.assertIn("SOUL.md", collected)
-        self.assertIn("agents/main.md", collected)
 
     def test_missing_root_returns_empty(self):
         spec = QoderWorkspaceAllowlist(

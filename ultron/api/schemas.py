@@ -110,10 +110,9 @@ class CreateRepoRequest(BaseModel):
 
     Path: str = Field(..., description="Repo path (user/org); must match the caller")
     Name: str = Field(..., description="Repo name; stored as agent_id")
-    Framework: str = Field(
-        ..., description="Framework/product, e.g. OpenClaw / QwenPaw / nanobot"
+    Framework: Optional[str] = Field(
+        None, description="Framework/product, e.g. OpenClaw / QwenPaw / nanobot (optional)"
     )
-    Visibility: str = Field("public", description="Visibility: public / private")
 
 
 class LfsObject(BaseModel):
@@ -127,18 +126,18 @@ class LfsBatchRequest(BaseModel):
 
 
 class CommitAction(BaseModel):
-    action: str = Field(..., description="Operation: update / delete")
+    action: str = Field(..., description="Operation: create / update / delete")
     path: str = Field(..., description="File path within the repo")
     type: str = Field(
         "normal", description="File type: normal (regular) / lfs (large)"
     )
     size: int = Field(0, description="File size in bytes")
-    sha256: str = Field("", description="SHA256 (required for lfs, may be empty)")
+    sha256: str = Field("", description="SHA256 (required for lfs, may be empty for normal)")
     content: str = Field(
-        "", description="Content: base64 for normal files, empty for lfs"
+        "", description="Content: base64 for normal files, empty for lfs/delete"
     )
     encoding: str = Field(
-        "", description="Encoding: base64 for normal files, empty for lfs"
+        "", description="Encoding: base64 for normal files, empty for lfs/delete"
     )
 
 

@@ -10,7 +10,7 @@ Subcommands:
 import argparse
 import sys
 
-from .commands import cmd_convert, cmd_download, cmd_list, cmd_login, cmd_recover, cmd_stop, cmd_upload, cmd_watch
+from .commands import cmd_convert, cmd_download, cmd_list, cmd_login, cmd_recover, cmd_status, cmd_stop, cmd_upload, cmd_watch
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -111,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Source workspace root to read (default: source framework's path).",
     )
     p_cv.add_argument(
-        "--out", "-o",
+        "--out-dir", "-o",
         help="Destination directory to write (default: target framework's path).",
     )
     p_cv.add_argument(
@@ -120,17 +120,49 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_cv.set_defaults(func=cmd_convert)
 
-    # ---- list ----
+    # ---- list (remote) ----
     p_list = sub.add_parser(
         "list",
-        help="List discoverable sub-agents for a framework.",
+        help="List remote agent repositories.",
+        description="Query and display remote agent repositories with pagination.",
     )
     p_list.add_argument(
+        "--owner", default=None,
+        help="Filter by owner username or organization name.",
+    )
+    p_list.add_argument(
+        "--page", dest="page_number", type=int, default=1,
+        help="Page number for pagination (default: 1).",
+    )
+    p_list.add_argument(
+        "--page-size", dest="page_size", type=int, default=10,
+        help="Number of items per page (default: 10).",
+    )
+    p_list.add_argument("--server", help="Server URL override.")
+    p_list.add_argument("--token", help="API token override.")
+    p_list.set_defaults(func=cmd_list)
+
+    # ---- status ----
+    p_status = sub.add_parser(
+        "status",
+        help="Show local agent status for a framework.",
+    )
+    p_status.add_argument(
         "--framework", "-f", required=True,
         help="Agent framework / bot type.",
     )
-    p_list.add_argument("--local_dir", "-d", help="Override workspace root.")
-    p_list.set_defaults(func=cmd_list)
+    p_status.add_argument("--local_dir", "-d", help="Override workspace root.")
+    p_status.set_defaults(func=cmd_status)
+
+    # ---- backups ----
+    p_backups = sub.add_parser(
+        "backups",
+        help="List available backups.",
+    )
+    p_backups.add_argument("--framework", "-f", help="Filter by framework.")
+    p_backups.add_argument("--name", "-n", help="Filter by agent name.")
+    p_backups.add_argument("--local_dir", "-d", help="Override workspace root.")
+    p_backups.set_defaults(func=cmd_recover, target=None, list=True)
 
     # ---- watch ----
     p_watch = sub.add_parser(
@@ -146,8 +178,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Local sub-agent name (default: global/shared files only).",
     )
     p_watch.add_argument(
-        "--repo", "-r",
-        help="Remote repository name. Supports 'group/name' format. Defaults to local name.",
+        "--repo", "-r", required=True,
+        help="Remote repository name (required). Supports 'group/name' format.",
     )
     p_watch.add_argument("--local_dir", "-d", help="Override workspace root.")
     p_watch.add_argument("--server", help="Server URL override.")
@@ -221,6 +253,7 @@ def _run_watch_daemon(param_path: str) -> int:
     interval = payload.get("interval", 120)
     push_only = payload.get("push_only", True)
     local_name = payload.get("local_name") or ALL_AGENT_NAME
+    local_dir = payload.get("local_dir") or None
 
     if not repo:
         repo = "default"
@@ -232,7 +265,7 @@ def _run_watch_daemon(param_path: str) -> int:
     if not server or not token or not username:
         return 1
 
-    spec = _build_allowlist(framework, local_name, None)
+    spec = _build_allowlist(framework, local_name, local_dir)
     client = UltronClient(server, token)
 
     # Redirect stdout/stderr to log file.
